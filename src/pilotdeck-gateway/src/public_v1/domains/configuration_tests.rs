@@ -606,14 +606,40 @@ async fn anchor_run_generation_is_explainable_and_not_hot_swapped() {
     let snapshot_run = snapshot["run"].clone();
     assert_eq!(snapshot_run["config"], config_before);
 
-    // The configuration's own generation advanced and is explainable through
-    // resolve (a different, configuration-owned generation namespace; the
-    // run-submission pickup of the config generation is an integrator seam,
-    // see the task report).
+    // The configuration's own generation advanced and a newly submitted run
+    // picks up the new applied generation and revision without affecting the
+    // earlier in-flight run.
     assert_ne!(
         second["effectiveGeneration"], config_before["effectiveGeneration"],
         "a stored config change must advance the configuration generation"
     );
+
+    let new_run_id = match rt
+        .store()
+        .submit_run(
+            &json!({
+                "instanceId": iid,
+                "sessionId": "sess-cfg",
+                "input": [{"kind": "text", "text": "after-config"}],
+            }),
+            Some("key-cfg-run-2"),
+        )
+        .unwrap()
+    {
+        crate::public_v1::store::SubmitDisposition::NewRun { run_id, .. } => run_id,
+        other => panic!("expected a new run, got {other:?}"),
+    };
+    let run_after_cfg = rt.store().get_run(&new_run_id).unwrap();
+    let config_new_run = run_after_cfg.to_contract_json()["config"].clone();
+    assert_eq!(
+        config_new_run["effectiveGeneration"], second["effectiveGeneration"],
+        "new runs submitted after configuration.update must bind the new effectiveGeneration"
+    );
+    assert_eq!(
+        config_new_run["configRevision"], second["storedRevision"],
+        "new runs submitted after configuration.update must bind the applied configRevision"
+    );
+    assert_ne!(config_new_run, config_before);
 }
 
 // ---------------------------------------------------------------------------
@@ -1198,4 +1224,281 @@ async fn update_emits_one_configuration_changed_event_without_values() {
         !text.contains("sk-live-x"),
         "event payload leaked a secret: {text}"
     );
+}
+
+#[tokio::test]
+async fn nested_secrets_are_masked_everywhere_and_redacted_roundtrip_preserves() {
+    let (_tmp, rt, iid) = setup("cfg-nested-secret");
+    let first = update(
+        &rt,
+        &iid,
+        instance_scope(),
+        "cfg-0",
+        json!([
+            {
+                "key": "providers.custom",
+                "action": "set",
+                "value": {
+                    "endpoint": "https://api.example.com/v1",
+                    "apiKey": "sk-nested-live-1",
+                    "nested": [{"token": "tok-nested-array"}]
+                }
+            },
+            {
+                "key": "adapters.feishu",
+                "action": "set",
+                "value": {"appSecret": "feishu-secret-99"}
+            }
+        ]),
+    )
+    .await
+    .unwrap();
+    let rev = first["storedRevision"].as_str().unwrap().to_owned();
+
+    // Neither resolve nor read_layer may expose any nested secret literal.
+    let resolved = resolve(&rt, &iid, instance_scope()).await;
+    let resolved_text = serde_json::to_string(&resolved).unwrap();
+    assert!(!resolved_text.contains("sk-nested-live-1"));
+    assert!(!resolved_text.contains("tok-nested-array"));
+    assert!(!resolved_text.contains("feishu-secret-99"));
+
+    let p_entry = resolved["values"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|v| v["key"] == "providers.custom")
+        .unwrap();
+    assert_eq!(p_entry["sensitive"], true);
+    assert_eq!(p_entry["value"]["apiKey"], super::REDACTED);
+    assert_eq!(p_entry["value"]["endpoint"], "https://api.example.com/v1");
+    assert_eq!(p_entry["value"]["nested"][0]["token"], super::REDACTED);
+
+    let (_, layer) = rt
+        .dispatch(
+            "configuration.read_layer",
+            json!({"instanceId": iid, "scope": instance_scope()}),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    let layer_text = serde_json::to_string(&layer).unwrap();
+    assert!(!layer_text.contains("sk-nested-live-1"));
+    assert!(!layer_text.contains("tok-nested-array"));
+    assert!(!layer_text.contains("feishu-secret-99"));
+
+    // Updating another field while passing "<redacted>" back preserves stored nested secrets.
+    let second = update(
+        &rt,
+        &iid,
+        instance_scope(),
+        &rev,
+        json!([
+            {
+                "key": "providers.custom",
+                "action": "set",
+                "value": {
+                    "endpoint": "https://api2.example.com/v1",
+                    "apiKey": "<redacted>",
+                    "nested": [{"token": "<redacted>"}]
+                }
+            }
+        ]),
+    )
+    .await
+    .unwrap();
+    assert!(
+        second["issues"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|i| i["code"] == "MASKED_SECRET_PRESERVED")
+    );
+    let db = ConfigDb::open(rt.store().home()).unwrap();
+    let stored = db
+        .read_layer("instance")
+        .unwrap()
+        .get("providers.custom")
+        .cloned()
+        .unwrap();
+    assert_eq!(stored.value["endpoint"], "https://api2.example.com/v1");
+    assert_eq!(stored.value["apiKey"], "sk-nested-live-1");
+    assert_eq!(stored.value["nested"][0]["token"], "tok-nested-array");
+
+    // Passing "<redacted>" for a nested field without an existing stored value rejects.
+    let rev2 = second["storedRevision"].as_str().unwrap().to_owned();
+    let err = update(
+        &rt,
+        &iid,
+        instance_scope(),
+        &rev2,
+        json!([
+            {
+                "key": "adapters.slack",
+                "action": "set",
+                "value": {"botToken": "<redacted>"}
+            }
+        ]),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(contract_code(&err), "INVALID_ARGUMENT");
+}
+
+#[tokio::test]
+async fn validate_rejected_digest_masks_secrets_and_does_not_hold_write_lock() {
+    let (_tmp, rt, iid) = setup("cfg-validate-digest-mask");
+    let (_, res_a) = rt
+        .dispatch(
+            "configuration.validate",
+            json!({
+                "instanceId": iid,
+                "scope": instance_scope(),
+                "expectedRevision": "cfg-0",
+                "changes": [
+                    {"key": "", "action": "set", "value": "bad"},
+                    {"key": "provider.apiKey", "action": "set", "value": "sk-secret-alpha"},
+                    {"key": "providers.custom", "action": "set", "value": {"apiKey": "sk-nested-alpha"}}
+                ]
+            }),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(res_a["valid"], false);
+
+    let (_, res_b) = rt
+        .dispatch(
+            "configuration.validate",
+            json!({
+                "instanceId": iid,
+                "scope": instance_scope(),
+                "expectedRevision": "cfg-0",
+                "changes": [
+                    {"key": "", "action": "set", "value": "bad"},
+                    {"key": "provider.apiKey", "action": "set", "value": "sk-secret-beta"},
+                    {"key": "providers.custom", "action": "set", "value": {"apiKey": "sk-nested-beta"}}
+                ]
+            }),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(res_b["valid"], false);
+    assert_eq!(
+        res_a["candidateDigest"], res_b["candidateDigest"],
+        "rejected validation candidateDigest must redact secrets before hashing"
+    );
+}
+
+#[tokio::test]
+async fn snapshot_run_config_in_tx_tracks_applied_generation_and_skips_failed_apply() {
+    let (_tmp, rt, iid) = setup("cfg-snapshot-fn");
+    seed_project_session(&rt, &iid).await;
+    {
+        let conn = rt.store().conn.lock().unwrap();
+        let (rev, applied_gen) =
+            super::snapshot_run_config_in_tx(&conn, "proj-cfg", "sess-cfg", "init-rev", "gen-init")
+                .unwrap();
+        assert_eq!(rev, "init-rev");
+        assert_eq!(applied_gen, "gen-init");
+    }
+
+    let ok = update(
+        &rt,
+        &iid,
+        instance_scope(),
+        "cfg-0",
+        json!([{"key": "a", "action": "set", "value": 1}]),
+    )
+    .await
+    .unwrap();
+    let rev1 = ok["storedRevision"].as_str().unwrap().to_owned();
+    let gen1 = ok["effectiveGeneration"].as_str().unwrap().to_owned();
+    {
+        let conn = rt.store().conn.lock().unwrap();
+        let (rev, applied_gen) =
+            super::snapshot_run_config_in_tx(&conn, "proj-cfg", "sess-cfg", "init-rev", "gen-init")
+                .unwrap();
+        assert_eq!(rev, rev1);
+        assert_eq!(applied_gen, gen1);
+    }
+
+    // Corrupt a stored row so next apply fails: snapshot must remain at applied rev1/gen1.
+    {
+        let conn = rt.store().conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO v1_config_layer_rows (layer, cfg_key, value_json, write_revision, updated_at)
+             VALUES ('instance', '', '1', 'cfg-1', '2026-11-18T00:00:00Z')",
+            [],
+        )
+        .unwrap();
+    }
+    let failed = update(
+        &rt,
+        &iid,
+        instance_scope(),
+        &rev1,
+        json!([{"key": "b", "action": "set", "value": 2}]),
+    )
+    .await
+    .unwrap();
+    assert_eq!(failed["reloadState"], "failed");
+    {
+        let conn = rt.store().conn.lock().unwrap();
+        let (rev, applied_gen) =
+            super::snapshot_run_config_in_tx(&conn, "proj-cfg", "sess-cfg", "init-rev", "gen-init")
+                .unwrap();
+        assert_eq!(rev, rev1);
+        assert_eq!(applied_gen, gen1);
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn sqlite_permissions_0700_0600_enforced_after_writes() {
+    use std::os::unix::fs::PermissionsExt;
+    let (_tmp, rt, iid) = setup("cfg-perms");
+    update(
+        &rt,
+        &iid,
+        instance_scope(),
+        "cfg-0",
+        json!([{"key": "provider.apiKey", "action": "set", "value": "sk-perm"}]),
+    )
+    .await
+    .unwrap();
+    let v1_dir = rt.store().home().join("v1");
+    let dir_mode = std::fs::metadata(&v1_dir).unwrap().permissions().mode() & 0o777;
+    assert_eq!(dir_mode, 0o700);
+    for suffix in ["", "-wal", "-shm"] {
+        let mut os = v1_dir.join("state.sqlite").as_os_str().to_os_string();
+        os.push(suffix);
+        let p = std::path::PathBuf::from(os);
+        if p.exists() {
+            let mode = std::fs::metadata(&p).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600, "unexpected mode for {}", p.display());
+        }
+    }
+}
+
+#[tokio::test]
+async fn domain_key_validators_block_policy_bypass_and_invalid_domain_keys() {
+    let (_tmp, rt, iid) = setup("cfg-domain-validators");
+    for bad in [
+        json!([{"key": "policy.default", "action": "set", "value": {"mode": "allow"}}]),
+        json!([{"key": "permissions.tools", "action": "set", "value": []}]),
+        json!([{"key": "defaultModel", "action": "set", "value": "missing-provider/missing-model"}]),
+        json!([{"key": "providers.bad", "action": "set", "value": {"endpoint": "ftp://example.com"}}]),
+        json!([{"key": "context.thinking", "action": "set", "value": "not-a-bool"}]),
+    ] {
+        let err = update(&rt, &iid, instance_scope(), "cfg-0", bad)
+            .await
+            .unwrap_err();
+        assert_eq!(contract_code(&err), "INVALID_ARGUMENT");
+    }
+    let resolved = resolve(&rt, &iid, instance_scope()).await;
+    assert_eq!(resolved["storedRevision"], "cfg-0");
 }

@@ -40,10 +40,11 @@ use agentcpm_pd_protocol::errors::{
     EffectStatus, RetrySpec,
 };
 use chrono::Utc;
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde_json::{Value, json};
 
 use crate::public_v1::domains::DomainRegistry;
+use crate::public_v1::domains::configuration::{self, VIssue};
 use crate::public_v1::runtime::{DispatchError, PublicV1Runtime};
 
 /// Contract error codes declared by `model.write` / `model_selection.set`
@@ -73,9 +74,93 @@ const MODEL_SELECTIONS_TABLE_DDL: &str = "CREATE TABLE IF NOT EXISTS v1_model_se
     updated_at TEXT NOT NULL
 )";
 
+fn validate_model_config_key(
+    conn: &Connection,
+    key: &str,
+    value: &Value,
+) -> Result<Vec<VIssue>, ContractError> {
+    if !matches!(
+        key,
+        "defaultModel" | "models.default" | "modelSelection.default"
+    ) {
+        return Ok(Vec::new());
+    }
+    if value.is_null() {
+        return Ok(Vec::new());
+    }
+    let pair: Option<(String, String)> = if let Some(s) = value.as_str() {
+        s.split_once('/')
+            .filter(|(p, m)| !p.trim().is_empty() && !m.trim().is_empty())
+            .map(|(p, m)| (p.trim().to_owned(), m.trim().to_owned()))
+    } else if let Some(obj) = value.as_object() {
+        match (
+            obj.get("providerId").and_then(Value::as_str),
+            obj.get("modelId").and_then(Value::as_str),
+        ) {
+            (Some(p), Some(m)) if !p.trim().is_empty() && !m.trim().is_empty() => {
+                Some((p.trim().to_owned(), m.trim().to_owned()))
+            }
+            _ => None,
+        }
+    } else {
+        None
+    };
+    let Some((provider_id, model_id)) = pair else {
+        return Ok(vec![VIssue::new(
+            CODE_MODEL_INVALID,
+            Some(key.to_owned()),
+            "model reference must be `providerId/modelId` or `{providerId, modelId}`",
+            true,
+        )]);
+    };
+    let Some(model) = load_model(conn, &provider_id, &model_id)? else {
+        return Ok(vec![VIssue::new(
+            "DANGLING_MODEL_REFERENCE",
+            Some(key.to_owned()),
+            format!("model `{provider_id}/{model_id}` does not exist"),
+            true,
+        )]);
+    };
+    let provider_enabled: Option<i64> = conn
+        .query_row(
+            "SELECT enabled FROM v1_providers WHERE provider_id = ?1",
+            params![provider_id],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(models_sql_err)?;
+    if !model.enabled || provider_enabled != Some(1) {
+        return Ok(vec![VIssue::new(
+            CODE_MODEL_UNAVAILABLE,
+            Some(key.to_owned()),
+            format!("model `{provider_id}/{model_id}` or its provider is disabled"),
+            true,
+        )]);
+    }
+    Ok(Vec::new())
+}
+
+/// Resolves the effective `(providerId, modelId)` selection for a session run
+/// (`session -> project -> instance`) inside an active SQLite transaction
+/// (consumed by `runtime.rs::drive_owned_turn` hook).
+#[allow(dead_code)]
+pub(crate) fn resolve_effective_model_for_run_in_tx(
+    conn: &Connection,
+    initialization_revision: &str,
+    project_id: &str,
+    session_id: &str,
+) -> Result<Option<(String, String)>, ContractError> {
+    let scope = SelectionScope::Session {
+        project_id: project_id.to_owned(),
+        session_id: session_id.to_owned(),
+    };
+    Ok(resolve_selection(conn, initialization_revision, &scope)?.effective)
+}
+
 pub(super) fn register(reg: &mut DomainRegistry) {
     reg.schema("v1_models", MODELS_TABLE_DDL);
     reg.schema("v1_model_selections", MODEL_SELECTIONS_TABLE_DDL);
+    configuration::register_named_scoped_validator("models", validate_model_config_key);
     reg.handler("model.list", |rt, input, _key, _rev| {
         Box::pin(model_list(rt, input))
     });
@@ -371,84 +456,110 @@ fn page_info(snapshot_revision: &str, end: usize, total: usize) -> Value {
 // model.list / model.get
 // ---------------------------------------------------------------------------
 
+fn models_mutex_err() -> ContractError {
+    ContractError::new(
+        CODE_UNAVAILABLE,
+        "sqlite store mutex poisoned",
+        RetrySpec::backoff_read(Some(250)),
+        EffectStatus::Unknown,
+    )
+}
+
+async fn run_blocking<F>(rt: &Arc<PublicV1Runtime>, f: F) -> Result<Value, DispatchError>
+where
+    F: FnOnce(&PublicV1Runtime) -> Result<Value, ContractError> + Send + 'static,
+{
+    let rt_cloned = Arc::clone(rt);
+    let res = tokio::task::spawn_blocking(move || f(&rt_cloned))
+        .await
+        .map_err(|e| {
+            DispatchError::from(ContractError::new(
+                CODE_UNAVAILABLE,
+                format!("blocking model task failed: {e}"),
+                RetrySpec::backoff_read(Some(250)),
+                EffectStatus::Unknown,
+            ))
+        })?;
+    res.map_err(DispatchError::from)
+}
+
 async fn model_list(
     rt: Arc<PublicV1Runtime>,
     input: Value,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
-    let (offset, limit) = parse_page(input.get("page"))?;
-    let provider_filter = input.get("providerId").and_then(Value::as_str);
-    let available_only = input
-        .get("availableOnly")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
+    let body = run_blocking(&rt, move |rt| {
+        let (offset, limit) = parse_page(input.get("page"))?;
+        let provider_filter = input.get("providerId").and_then(Value::as_str);
+        let available_only = input
+            .get("availableOnly")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
 
-    let conn = rt.store().conn.lock().expect("sqlite mutex");
-    let snapshot_revision = models_read_current_rev(&conn)?;
-    let mut models = load_all_models(&conn)?;
-    if let Some(provider_id) = provider_filter {
-        models.retain(|m| m.provider_id == provider_id);
-    }
-    if available_only {
-        // "禁用/未装配/不存在区分": available = the model is registered
-        // (装配), its own `enabled` flag is true, and its provider exists
-        // and is enabled. Everything else stays visible only without the
-        // filter — nothing is silently dropped from the full catalog view.
-        let enabled_providers: std::collections::BTreeSet<String> = {
-            let mut stmt = conn
-                .prepare("SELECT provider_id FROM v1_providers WHERE enabled = 1")
-                .map_err(models_sql_err)?;
+        let conn = rt.store().conn.lock().map_err(|_| models_mutex_err())?;
+        let snapshot_revision = models_read_current_rev(&conn)?;
+        let mut models = load_all_models(&conn)?;
+        if let Some(provider_id) = provider_filter {
+            models.retain(|m| m.provider_id == provider_id);
+        }
+        if available_only {
+            let enabled_providers: std::collections::BTreeSet<String> = {
+                let mut stmt = conn
+                    .prepare("SELECT provider_id FROM v1_providers WHERE enabled = 1")
+                    .map_err(models_sql_err)?;
 
-            stmt.query_map([], |r| r.get::<_, String>(0))
-                .map_err(models_sql_err)?
-                .collect::<Result<std::collections::BTreeSet<_>, _>>()
-                .map_err(models_sql_err)?
-        };
-        models.retain(|m| m.enabled && enabled_providers.contains(&m.provider_id));
-    }
-    let total = models.len();
-    let end = offset.saturating_add(limit).min(total);
-    if offset > total {
-        return Err(models_invalid_argument("pagination cursor beyond end of collection").into());
-    }
-    let items: Vec<Value> = models
-        .into_iter()
-        .skip(offset)
-        .take(limit)
-        .map(|m| m.to_contract_json())
-        .collect();
-    drop(conn);
-    Ok((
-        ResponseOutcome::Succeeded,
-        json!({
+                stmt.query_map([], |r| r.get::<_, String>(0))
+                    .map_err(models_sql_err)?
+                    .collect::<Result<std::collections::BTreeSet<_>, _>>()
+                    .map_err(models_sql_err)?
+            };
+            models.retain(|m| m.enabled && enabled_providers.contains(&m.provider_id));
+        }
+        let total = models.len();
+        let end = offset.saturating_add(limit).min(total);
+        if offset > total {
+            return Err(models_invalid_argument(
+                "pagination cursor beyond end of collection",
+            ));
+        }
+        let items: Vec<Value> = models
+            .into_iter()
+            .skip(offset)
+            .take(limit)
+            .map(|m| m.to_contract_json())
+            .collect();
+        drop(conn);
+        Ok(json!({
             "items": items,
             "pageInfo": page_info(&snapshot_revision, end, total),
-        }),
-    ))
+        }))
+    })
+    .await?;
+    Ok((ResponseOutcome::Succeeded, body))
 }
 
 async fn model_get(
     rt: Arc<PublicV1Runtime>,
     input: Value,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
-    let (provider_id, model_id) = parse_model_ref(&input)?;
-    let conn = rt.store().conn.lock().expect("sqlite mutex");
-    let found = load_model(&conn, &provider_id, &model_id)?;
-    drop(conn);
-    // "同名不同provider不混" / "错误ID不回落默认": exact (provider, model)
-    // lookup, no fallback.
-    let Some(model) = found else {
-        return Err(ContractError::new(
-            CODE_NOT_FOUND,
-            format!("model `{provider_id}/{model_id}` not found"),
-            RetrySpec::never(),
-            EffectStatus::NotApplied,
-        )
-        .into());
-    };
-    Ok((
-        ResponseOutcome::Succeeded,
-        json!({"model": model.to_contract_json()}),
-    ))
+    let body = run_blocking(&rt, move |rt| {
+        let (provider_id, model_id) = parse_model_ref(&input)?;
+        let conn = rt.store().conn.lock().map_err(|_| models_mutex_err())?;
+        let found = load_model(&conn, &provider_id, &model_id)?;
+        drop(conn);
+        // "同名不同provider不混" / "错误ID不回落默认": exact (provider, model)
+        // lookup, no fallback.
+        let Some(model) = found else {
+            return Err(ContractError::new(
+                CODE_NOT_FOUND,
+                format!("model `{provider_id}/{model_id}` not found"),
+                RetrySpec::never(),
+                EffectStatus::NotApplied,
+            ));
+        };
+        Ok(json!({"model": model.to_contract_json()}))
+    })
+    .await?;
+    Ok((ResponseOutcome::Succeeded, body))
 }
 
 /// Parses the contract `ModelRef` (`{providerId, modelId}`) from
@@ -483,110 +594,106 @@ async fn model_write(
     input: Value,
     expected_revision: Option<String>,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
-    let (provider_id, model_id) = parse_model_ref(&input)?;
-    let name = input
-        .get("name")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .trim()
-        .to_owned();
-    if name.is_empty() {
-        return Err(ContractError::new(
-            CODE_MODEL_INVALID,
-            "model name is required and must not be blank",
-            RetrySpec::never(),
-            EffectStatus::NotApplied,
+    let body = run_blocking(&rt, move |rt| {
+        let (provider_id, model_id) = parse_model_ref(&input)?;
+        let name = input
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .trim()
+            .to_owned();
+        if name.is_empty() {
+            return Err(ContractError::new(
+                CODE_MODEL_INVALID,
+                "model name is required and must not be blank",
+                RetrySpec::never(),
+                EffectStatus::NotApplied,
+            ));
+        }
+        let enabled = input
+            .get("enabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(true);
+        let declared =
+            validate_capability_pairs(input.get("declaredCapabilities").and_then(Value::as_array))?;
+
+        let expected = expected_revision
+            .as_deref()
+            .or_else(|| input.get("expectedRevision").and_then(Value::as_str));
+
+        let store = rt.store();
+        let mut conn = store.conn.lock().map_err(|_| models_mutex_err())?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(models_sql_err)?;
+
+        let provider_exists: Option<i64> = tx
+            .query_row(
+                "SELECT 1 FROM v1_providers WHERE provider_id = ?1",
+                params![provider_id],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(models_sql_err)?;
+        if provider_exists.is_none() {
+            return Err(ContractError::new(
+                CODE_PROVIDER_NOT_FOUND,
+                format!("provider `{provider_id}` does not exist"),
+                RetrySpec::never(),
+                EffectStatus::NotApplied,
+            ));
+        }
+
+        let existing = load_model(&tx, &provider_id, &model_id)?;
+        match (expected, &existing) {
+            (None, Some(current)) => {
+                return Err(models_revision_conflict("<omitted>", &current.revision));
+            }
+            (Some(_), None) => {
+                return Err(models_revision_conflict(
+                    expected.unwrap_or_default(),
+                    "<absent>",
+                ));
+            }
+            (Some(expected), Some(current)) if current.revision != expected => {
+                return Err(models_revision_conflict(expected, &current.revision));
+            }
+            _ => {}
+        }
+
+        let new_rev = models_next_rev_in_tx(&tx)?;
+        let now = Utc::now().to_rfc3339();
+        let evidence_json = existing
+            .as_ref()
+            .map(|m| serde_json::to_string(&m.evidence).unwrap_or_else(|_| "[]".into()))
+            .unwrap_or_else(|| "[]".to_owned());
+        tx.execute(
+            "INSERT INTO v1_models
+                 (provider_id, model_id, name, enabled, declared_capabilities_json,
+                  capability_evidence_json, revision, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)
+             ON CONFLICT(provider_id, model_id) DO UPDATE SET
+                name = excluded.name,
+                enabled = excluded.enabled,
+                declared_capabilities_json = excluded.declared_capabilities_json,
+                capability_evidence_json = excluded.capability_evidence_json,
+                revision = excluded.revision,
+                updated_at = excluded.updated_at",
+            params![
+                provider_id,
+                model_id,
+                name,
+                i64::from(enabled),
+                serde_json::to_string(&declared).unwrap_or_else(|_| "[]".into()),
+                evidence_json,
+                new_rev,
+                now,
+            ],
         )
-        .into());
-    }
-    let enabled = input
-        .get("enabled")
-        .and_then(Value::as_bool)
-        .unwrap_or(true);
-    let declared =
-        validate_capability_pairs(input.get("declaredCapabilities").and_then(Value::as_array))?;
-
-    // The envelope-level expectedRevision wins over the input field (same
-    // precedence as `policy.update`); omitted means create-only.
-    let expected = expected_revision
-        .as_deref()
-        .or_else(|| input.get("expectedRevision").and_then(Value::as_str));
-
-    let store = rt.store();
-    let mut conn = store.conn.lock().expect("sqlite mutex");
-    let tx = conn.transaction().map_err(models_sql_err)?;
-
-    let provider_exists: Option<i64> = tx
-        .query_row(
-            "SELECT 1 FROM v1_providers WHERE provider_id = ?1",
-            params![provider_id],
-            |r| r.get(0),
-        )
-        .optional()
         .map_err(models_sql_err)?;
-    if provider_exists.is_none() {
-        return Err(ContractError::new(
-            CODE_PROVIDER_NOT_FOUND,
-            format!("provider `{provider_id}` does not exist"),
-            RetrySpec::never(),
-            EffectStatus::NotApplied,
-        )
-        .into());
-    }
+        tx.commit().map_err(models_sql_err)?;
 
-    let existing = load_model(&tx, &provider_id, &model_id)?;
-    match (expected, &existing) {
-        // Create: omitted revision is only usable when the model is absent.
-        (None, Some(current)) => {
-            return Err(models_revision_conflict("<omitted>", &current.revision).into());
-        }
-        // CAS target does not exist.
-        (Some(_), None) => {
-            return Err(models_revision_conflict(expected.unwrap_or_default(), "<absent>").into());
-        }
-        (Some(expected), Some(current)) if current.revision != expected => {
-            return Err(models_revision_conflict(expected, &current.revision).into());
-        }
-        _ => {}
-    }
-
-    let new_rev = models_next_rev_in_tx(&tx)?;
-    let now = Utc::now().to_rfc3339();
-    // 「声明能力与验证证据分开」: a declared-capabilities write never touches
-    // the stored evidence (verification flows own that column).
-    let evidence_json = existing
-        .as_ref()
-        .map(|m| serde_json::to_string(&m.evidence).unwrap_or_else(|_| "[]".into()))
-        .unwrap_or_else(|| "[]".to_owned());
-    tx.execute(
-        "INSERT INTO v1_models
-             (provider_id, model_id, name, enabled, declared_capabilities_json,
-              capability_evidence_json, revision, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)
-         ON CONFLICT(provider_id, model_id) DO UPDATE SET
-            name = excluded.name,
-            enabled = excluded.enabled,
-            declared_capabilities_json = excluded.declared_capabilities_json,
-            capability_evidence_json = excluded.capability_evidence_json,
-            revision = excluded.revision,
-            updated_at = excluded.updated_at",
-        params![
-            provider_id,
-            model_id,
-            name,
-            i64::from(enabled),
-            serde_json::to_string(&declared).unwrap_or_else(|_| "[]".into()),
-            evidence_json,
-            new_rev,
-            now,
-        ],
-    )
-    .map_err(models_sql_err)?;
-    tx.commit().map_err(models_sql_err)?;
-
-    Ok((
-        ResponseOutcome::Succeeded,
-        json!({"model": {
+        Ok(json!({"model": {
             "reference": {"providerId": provider_id, "modelId": model_id},
             "name": name,
             "enabled": enabled,
@@ -594,8 +701,10 @@ async fn model_write(
             "capabilities": declared,
             "capabilityEvidence": serde_json::from_str::<Value>(&evidence_json)
                 .unwrap_or(json!([])),
-        }}),
-    ))
+        }}))
+    })
+    .await?;
+    Ok((ResponseOutcome::Succeeded, body))
 }
 
 /// Contract `Pair[]` validation: non-empty, unique keys (`MODEL_INVALID`
@@ -707,23 +816,21 @@ async fn model_selection_get(
     rt: Arc<PublicV1Runtime>,
     input: Value,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
-    let scope = parse_scope(&rt, &input)?;
-    let store = rt.store();
-    let conn = store.conn.lock().expect("sqlite mutex");
-    let view = resolve_selection(&conn, &store.meta().initialization_revision, &scope)?;
-    let own = load_selection(&conn, &scope)?;
-    drop(conn);
+    let body = run_blocking(&rt, move |rt| {
+        let scope = parse_scope(rt, &input)?;
+        let store = rt.store();
+        let conn = store.conn.lock().map_err(|_| models_mutex_err())?;
+        let view = resolve_selection(&conn, &store.meta().initialization_revision, &scope)?;
+        let own = load_selection(&conn, &scope)?;
+        drop(conn);
 
-    let model_ref = |pair: &Option<(String, String)>| match pair {
-        Some((provider_id, model_id)) => json!({"providerId": provider_id, "modelId": model_id}),
-        None => Value::Null,
-    };
-    Ok((
-        ResponseOutcome::Succeeded,
-        json!({
-            // 「无override能解释回落」: the effective model plus the scope
-            // that provided it; null when nothing is defined anywhere
-            // (「无有效模型返回null不随机选择」).
+        let model_ref = |pair: &Option<(String, String)>| match pair {
+            Some((provider_id, model_id)) => {
+                json!({"providerId": provider_id, "modelId": model_id})
+            }
+            None => Value::Null,
+        };
+        Ok(json!({
             "effectiveModel": model_ref(&view.effective),
             "overrideModel": match &own {
                 Some(record) => json!({
@@ -734,8 +841,10 @@ async fn model_selection_get(
             },
             "sourceScope": view.source_scope.to_scope_json(),
             "revision": view.revision,
-        }),
-    ))
+        }))
+    })
+    .await?;
+    Ok((ResponseOutcome::Succeeded, body))
 }
 
 async fn model_selection_set(
@@ -743,155 +852,149 @@ async fn model_selection_set(
     input: Value,
     expected_revision: Option<String>,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
-    let scope = parse_scope(&rt, &input)?;
-    // Schema-required, non-nullable: the envelope-level value wins (same
-    // precedence as the other conditional writes).
-    let expected = expected_revision
-        .as_deref()
-        .or_else(|| input.get("expectedRevision").and_then(Value::as_str))
-        .unwrap_or_default()
-        .to_owned();
-    // `model` is schema-required and nullable: `null` clears this scope's
-    // override (「null清除而省略非法」— omission never reaches here).
-    let requested = input.get("model").cloned().unwrap_or(Value::Null);
+    let payload = run_blocking(&rt, move |rt| {
+        let scope = parse_scope(rt, &input)?;
+        let expected = expected_revision
+            .as_deref()
+            .or_else(|| input.get("expectedRevision").and_then(Value::as_str))
+            .unwrap_or_default()
+            .to_owned();
+        let requested = input.get("model").cloned().unwrap_or(Value::Null);
 
-    let store = rt.store();
-    let mut conn = store.conn.lock().expect("sqlite mutex");
-    let tx = conn.transaction().map_err(models_sql_err)?;
+        let store = rt.store();
+        let mut conn = store.conn.lock().map_err(|_| models_mutex_err())?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(models_sql_err)?;
 
-    let current = resolve_selection(&tx, &store.meta().initialization_revision, &scope)?;
-    if current.revision != expected {
-        return Err(models_revision_conflict(&expected, &current.revision).into());
-    }
+        let current = resolve_selection(&tx, &store.meta().initialization_revision, &scope)?;
+        if current.revision != expected {
+            return Err(models_revision_conflict(&expected, &current.revision));
+        }
 
-    let now = Utc::now().to_rfc3339();
-    let mut changed = false;
-    match &requested {
-        Value::Null => {
-            // Clear: deleting a nonexistent own override is an explicit
-            // no-op (the effective model falls back to the ancestor's).
-            if load_selection(&tx, &scope)?.is_some() {
+        let now = Utc::now().to_rfc3339();
+        let mut changed = false;
+        match &requested {
+            Value::Null => {
+                if load_selection(&tx, &scope)?.is_some() {
+                    tx.execute(
+                        "DELETE FROM v1_model_selections WHERE scope_key = ?1",
+                        params![scope.key()],
+                    )
+                    .map_err(models_sql_err)?;
+                    changed = true;
+                }
+            }
+            reference => {
+                let provider_id = reference
+                    .get("providerId")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                let model_id = reference
+                    .get("modelId")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                let Some(model) = load_model(&tx, provider_id, model_id)? else {
+                    return Err(ContractError::new(
+                        CODE_MODEL_UNAVAILABLE,
+                        format!("model `{provider_id}/{model_id}` is not registered"),
+                        RetrySpec::never(),
+                        EffectStatus::NotApplied,
+                    ));
+                };
+                let provider_enabled: Option<i64> = tx
+                    .query_row(
+                        "SELECT enabled FROM v1_providers WHERE provider_id = ?1",
+                        params![provider_id],
+                        |r| r.get(0),
+                    )
+                    .optional()
+                    .map_err(models_sql_err)?;
+                if !model.enabled || provider_enabled != Some(1) {
+                    return Err(ContractError::new(
+                        CODE_MODEL_UNAVAILABLE,
+                        format!(
+                            "model `{provider_id}/{model_id}` is disabled or its provider is disabled"
+                        ),
+                        RetrySpec::never(),
+                        EffectStatus::NotApplied,
+                    ));
+                }
+                let new_rev = models_next_rev_in_tx(&tx)?;
                 tx.execute(
-                    "DELETE FROM v1_model_selections WHERE scope_key = ?1",
-                    params![scope.key()],
+                    "INSERT INTO v1_model_selections
+                         (scope_key, scope_json, provider_id, model_id, revision, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                     ON CONFLICT(scope_key) DO UPDATE SET
+                        scope_json = excluded.scope_json,
+                        provider_id = excluded.provider_id,
+                        model_id = excluded.model_id,
+                        revision = excluded.revision,
+                        updated_at = excluded.updated_at",
+                    params![
+                        scope.key(),
+                        serde_json::to_string(&scope.to_scope_json()).unwrap_or_default(),
+                        provider_id,
+                        model_id,
+                        new_rev,
+                        now,
+                    ],
                 )
                 .map_err(models_sql_err)?;
                 changed = true;
             }
         }
-        reference => {
-            let provider_id = reference
-                .get("providerId")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            let model_id = reference
-                .get("modelId")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            // 「无效模型拒绝」: the target must be registered and available
-            // (model enabled + provider exists and enabled).
-            let Some(model) = load_model(&tx, provider_id, model_id)? else {
-                return Err(ContractError::new(
-                    CODE_MODEL_UNAVAILABLE,
-                    format!("model `{provider_id}/{model_id}` is not registered"),
-                    RetrySpec::never(),
-                    EffectStatus::NotApplied,
-                )
-                .into());
-            };
-            let provider_enabled: Option<i64> = tx
-                .query_row(
-                    "SELECT enabled FROM v1_providers WHERE provider_id = ?1",
-                    params![provider_id],
-                    |r| r.get(0),
-                )
-                .optional()
-                .map_err(models_sql_err)?;
-            if !model.enabled || provider_enabled != Some(1) {
-                return Err(ContractError::new(
-                    CODE_MODEL_UNAVAILABLE,
-                    format!(
-                        "model `{provider_id}/{model_id}` is disabled or its provider is disabled"
-                    ),
-                    RetrySpec::never(),
-                    EffectStatus::NotApplied,
-                )
-                .into());
-            }
-            let new_rev = models_next_rev_in_tx(&tx)?;
-            tx.execute(
-                "INSERT INTO v1_model_selections
-                     (scope_key, scope_json, provider_id, model_id, revision, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-                 ON CONFLICT(scope_key) DO UPDATE SET
-                    scope_json = excluded.scope_json,
-                    provider_id = excluded.provider_id,
-                    model_id = excluded.model_id,
-                    revision = excluded.revision,
-                    updated_at = excluded.updated_at",
-                params![
-                    scope.key(),
-                    serde_json::to_string(&scope.to_scope_json()).unwrap_or_default(),
-                    provider_id,
-                    model_id,
-                    new_rev,
-                    now,
-                ],
-            )
-            .map_err(models_sql_err)?;
-            changed = true;
-        }
-    }
 
-    if changed {
-        append_model_event_in_tx(
-            &tx,
-            &scope.key(),
-            &match &scope {
-                SelectionScope::Session { session_id, .. } => session_id.clone(),
-                _ => String::new(),
-            },
-            "modelSelection.changed",
-            &json!({
-                "scope": scope.to_scope_json(),
-                "model": requested,
-            }),
-            &now,
-        )?;
-    }
-    tx.commit().map_err(models_sql_err)?;
-    drop(conn);
-    if changed {
-        store.event_notifier().notify_waiters();
-        store.state_notifier().notify_waiters();
-    }
-
-    // Report the post-write truth: re-resolve and return the now-effective
-    // revision so the next conditional write CASes against what `get`
-    // would report.
-    let conn = store.conn.lock().expect("sqlite mutex");
-    let after = resolve_selection(&conn, &store.meta().initialization_revision, &scope)?;
-    let own = load_selection(&conn, &scope)?;
-    drop(conn);
-    let effective_model = match &after.effective {
-        Some((provider_id, model_id)) => json!({"providerId": provider_id, "modelId": model_id}),
-        None => Value::Null,
-    };
-    Ok((
-        ResponseOutcome::Succeeded,
-        json!({
-            "effectiveModel": effective_model,
-            "overrideModel": match &own {
-                Some(record) => json!({
-                    "providerId": record.provider_id,
-                    "modelId": record.model_id,
+        if changed {
+            append_model_event_in_tx(
+                &tx,
+                &scope.key(),
+                &match &scope {
+                    SelectionScope::Session { session_id, .. } => session_id.clone(),
+                    _ => String::new(),
+                },
+                "modelSelection.changed",
+                &json!({
+                    "scope": scope.to_scope_json(),
+                    "model": requested,
                 }),
-                None => Value::Null,
-            },
-            "revision": after.revision,
-            "effectiveGeneration": store.meta().generation,
-        }),
-    ))
+                &now,
+            )?;
+        }
+        let after = resolve_selection(&tx, &store.meta().initialization_revision, &scope)?;
+        let own = load_selection(&tx, &scope)?;
+        let effective_generation =
+            configuration::current_effective_generation_or(&tx, &store.meta().generation)?;
+        tx.commit().map_err(models_sql_err)?;
+
+        let effective_model = match &after.effective {
+            Some((provider_id, model_id)) => {
+                json!({"providerId": provider_id, "modelId": model_id})
+            }
+            None => Value::Null,
+        };
+        Ok(json!({
+            "_changed": changed,
+            "body": {
+                "effectiveModel": effective_model,
+                "overrideModel": match &own {
+                    Some(record) => json!({
+                        "providerId": record.provider_id,
+                        "modelId": record.model_id,
+                    }),
+                    None => Value::Null,
+                },
+                "revision": after.revision,
+                "effectiveGeneration": effective_generation,
+            }
+        }))
+    })
+    .await?;
+    if payload["_changed"].as_bool() == Some(true) {
+        rt.store().event_notifier().notify_waiters();
+        rt.store().state_notifier().notify_waiters();
+    }
+    Ok((ResponseOutcome::Succeeded, payload["body"].clone()))
 }
 
 /// Durable event append into the shared `events` table (same two-step cursor

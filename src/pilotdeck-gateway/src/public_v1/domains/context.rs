@@ -57,6 +57,7 @@
 //!   `operations.get` 可查。
 
 use std::collections::HashMap;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 
@@ -66,12 +67,12 @@ use agentcpm_pd_protocol::errors::{
     CODE_CAPABILITY_UNAVAILABLE, CODE_INVALID_ARGUMENT, CODE_NOT_FOUND, CODE_REVISION_CONFLICT,
     CODE_UNAVAILABLE, ContractError, EffectStatus, RetrySpec,
 };
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::public_v1::domains::DomainRegistry;
-use crate::public_v1::domains::files::resolve_project;
+use crate::public_v1::domains::files::{CODE_PATH_ESCAPE, require_within, resolve_project};
 use crate::public_v1::domains::schedules::{
     DDL_DOMAIN_OPERATIONS, DomainDb, accept_domain_operation, finish_domain_operation,
     mark_domain_operation_running,
@@ -94,6 +95,11 @@ const THINKING_MODES: [&str; 8] = [
 /// (`model/thinking/settings.ts::THINKING_EFFORTS`); `default`/`off`/
 /// `minimal` carry no effort requirement.
 const THINKING_EFFORTS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
+const MAX_STYLE_DEPTH: usize = 16;
+const MAX_STYLE_FILES: usize = 1_000;
+const MAX_STYLE_FILE_BYTES: usize = 256 * 1024;
+const MAX_BUDGET_HISTORY_ROWS: i64 = 2_048;
+const MAX_BUDGET_HISTORY_BYTES: usize = 4 * 1024 * 1024;
 
 const DDL_CONTEXT_SETTINGS: &str = "CREATE TABLE IF NOT EXISTS v1_context_settings (
     scope_key TEXT PRIMARY KEY,
@@ -124,6 +130,10 @@ pub(super) fn register(reg: &mut DomainRegistry) {
     reg.schema("v1_context_settings", DDL_CONTEXT_SETTINGS);
     reg.schema("v1_context_style_state", DDL_CONTEXT_STYLE_STATE);
     reg.schema("v1_context_compactions", DDL_CONTEXT_COMPACTIONS);
+    crate::public_v1::domains::configuration::register_named_key_validator(
+        "context",
+        validate_context_config_key,
+    );
     reg.handler("context.inspect", |rt, input, _key, _rev| {
         Box::pin(context_inspect(rt, input))
     });
@@ -139,6 +149,43 @@ pub(super) fn register(reg: &mut DomainRegistry) {
     reg.handler("context.compact", |rt, input, key, _rev| {
         Box::pin(context_compact(rt, input, key))
     });
+}
+
+fn validate_context_config_key(
+    key: &str,
+    value: &Value,
+) -> Vec<crate::public_v1::domains::configuration::VIssue> {
+    use crate::public_v1::domains::configuration::VIssue;
+    match key {
+        "context.thinking" => {
+            let valid =
+                value.is_null() || value.as_str().is_some_and(|s| THINKING_MODES.contains(&s));
+            if valid {
+                Vec::new()
+            } else {
+                vec![VIssue::new(
+                    "INVALID_CONTEXT_THINKING",
+                    Some(key.to_owned()),
+                    format!("context.thinking must be null or one of {THINKING_MODES:?}"),
+                    true,
+                )]
+            }
+        }
+        "context.outputStyleId" | "context.output_style_id" => {
+            let valid = value.is_null() || value.as_str().is_some_and(|s| !s.trim().is_empty());
+            if valid {
+                Vec::new()
+            } else {
+                vec![VIssue::new(
+                    "INVALID_CONTEXT_STYLE",
+                    Some(key.to_owned()),
+                    "context.outputStyleId must be null or a non-empty string",
+                    true,
+                )]
+            }
+        }
+        _ => Vec::new(),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -443,6 +490,37 @@ fn resolve_settings(
     })
 }
 
+/// Effective session-chain context settings exposed to the turn runtime (`drive_owned_turn`).
+#[allow(dead_code)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct EffectiveContextForRun {
+    pub(crate) thinking: Option<String>,
+    pub(crate) output_style_id: Option<String>,
+    pub(crate) revision: String,
+}
+
+#[allow(dead_code)]
+pub(crate) fn resolve_effective_context_for_run_in_tx(
+    conn: &Connection,
+    initialization_revision: &str,
+    project_id: &str,
+    session_id: &str,
+) -> Result<EffectiveContextForRun, ContractError> {
+    let view = resolve_settings(
+        conn,
+        initialization_revision,
+        &ContextScope::Session {
+            project_id: project_id.to_owned(),
+            session_id: session_id.to_owned(),
+        },
+    )?;
+    Ok(EffectiveContextForRun {
+        thinking: view.thinking,
+        output_style_id: view.output_style_id,
+        revision: view.revision,
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Effective model (read-only read of the models domain's selection chain —
 // same table, same scheme, no cross-module import per the substrate rule)
@@ -572,49 +650,145 @@ fn history_entry_count(conn: &Connection, session_id: &str) -> Result<i64, Contr
     Ok(history_counts(conn, session_id)?.0)
 }
 
-/// The context budget: an estimated token count over the session's stored
-/// history text parts (the ported o200k estimator `model_cost`). Any
-/// estimator failure degrades the whole report to `status:"unknown"`.
-fn history_budget(conn: &Connection, session_id: &str) -> Result<Value, ContractError> {
+/// Fetches bounded history JSON rows inside the brief SQLite lock; large
+/// histories (`> MAX_BUDGET_HISTORY_ROWS` or `> MAX_BUDGET_HISTORY_BYTES`)
+/// skip fetching and degrade the budget report cleanly to `"unknown"`.
+fn fetch_history_content_rows(
+    conn: &Connection,
+    session_id: &str,
+    entry_count: i64,
+) -> Result<Option<Vec<String>>, ContractError> {
+    if entry_count > MAX_BUDGET_HISTORY_ROWS {
+        return Ok(None);
+    }
     let mut stmt = conn
         .prepare("SELECT content_json FROM history_entries WHERE session_id = ?1 ORDER BY seq")
         .map_err(context_sql_err)?;
-    let rows: Vec<String> = stmt
+    let mut rows_iter = stmt
         .query_map(params![session_id], |r| r.get::<_, String>(0))
-        .map_err(context_sql_err)?
-        .collect::<Result<Vec<_>, _>>()
         .map_err(context_sql_err)?;
-    drop(stmt);
-    let mut tokens: usize = 0;
-    for raw in &rows {
-        let content: Value = serde_json::from_str(raw).unwrap_or(json!([]));
-        let Some(parts) = content.as_array() else {
-            continue;
-        };
-        for part in parts {
-            if part.get("kind").and_then(Value::as_str) == Some("text")
-                && let Some(text) = part.get("text").and_then(Value::as_str)
+    let mut rows = Vec::with_capacity(entry_count.max(0) as usize);
+    let mut total_bytes: usize = 0;
+    for row in &mut rows_iter {
+        let raw = row.map_err(context_sql_err)?;
+        total_bytes = total_bytes.saturating_add(raw.len());
+        if total_bytes > MAX_BUDGET_HISTORY_BYTES || rows.len() as i64 >= MAX_BUDGET_HISTORY_ROWS {
+            return Ok(None);
+        }
+        rows.push(raw);
+    }
+    Ok(Some(rows))
+}
+
+fn unknown_history_budget() -> Value {
+    json!({
+        "status": "unknown",
+        "value": Value::Null,
+        "unit": "tokens",
+        "source": "history_entries",
+    })
+}
+
+fn estimate_part_tokens(part: &Value) -> Result<usize, ()> {
+    let kind = part.get("kind").and_then(Value::as_str);
+    match kind {
+        Some("text") => {
+            if let Some(text) = part.get("text").and_then(Value::as_str) {
+                crate::model_cost::estimate_text_tokens(text).map_err(|_| ())
+            } else {
+                Ok(0)
+            }
+        }
+        Some("thinking") => {
+            if let Some(text) = part
+                .get("reasoningContent")
+                .or_else(|| part.get("text"))
+                .and_then(Value::as_str)
             {
-                match crate::model_cost::estimate_text_tokens(text) {
-                    Ok(count) => tokens += count,
-                    Err(_) => {
-                        return Ok(json!({
-                            "status": "unknown",
-                            "value": Value::Null,
-                            "unit": "tokens",
-                            "source": "history_entries",
-                        }));
-                    }
+                crate::model_cost::estimate_text_tokens(text).map_err(|_| ())
+            } else {
+                Ok(0)
+            }
+        }
+        Some("attachment")
+        | Some("image")
+        | Some("pdf")
+        | Some("audio")
+        | Some("mediaReference")
+        | Some("media_reference") => Ok(crate::model_cost::MULTIMEDIA_TOKENS),
+        Some("toolCall") | Some("tool_call") | Some("toolUse") | Some("tool_use") => {
+            let mut combined = String::new();
+            if let Some(name) = part.get("name").and_then(Value::as_str) {
+                combined.push_str(name);
+            }
+            if let Some(input) = part.get("input").or_else(|| part.get("arguments"))
+                && !input.is_null()
+                && let Ok(serialized) = serde_json::to_string(input)
+            {
+                combined.push_str(&serialized);
+            }
+            crate::model_cost::estimate_text_tokens(&combined).map_err(|_| ())
+        }
+        Some("toolResult") | Some("tool_result") | Some("toolResultReference") => {
+            if let Some(preview) = part.get("preview").and_then(Value::as_str) {
+                crate::model_cost::estimate_text_tokens(preview).map_err(|_| ())
+            } else if let Some(content) = part.get("content") {
+                if let Some(text) = content.as_str() {
+                    crate::model_cost::estimate_text_tokens(text).map_err(|_| ())
+                } else if let Ok(serialized) = serde_json::to_string(content) {
+                    crate::model_cost::estimate_text_tokens(&serialized).map_err(|_| ())
+                } else {
+                    Ok(0)
                 }
+            } else if let Some(text) = part.get("text").and_then(Value::as_str) {
+                crate::model_cost::estimate_text_tokens(text).map_err(|_| ())
+            } else {
+                Ok(0)
+            }
+        }
+        _ => {
+            if let Some(text) = part.get("text").and_then(Value::as_str) {
+                crate::model_cost::estimate_text_tokens(text).map_err(|_| ())
+            } else if let Ok(serialized) = serde_json::to_string(part) {
+                crate::model_cost::estimate_text_tokens(&serialized).map_err(|_| ())
+            } else {
+                Ok(0)
             }
         }
     }
-    Ok(json!({
+}
+
+/// The context budget: CPU-bound o200k token estimation executed outside any
+/// SQLite mutex lock and outside Tokio async workers. Includes message
+/// overhead, text/thinking/tool parts, and multimedia placeholders matching
+/// `model_cost`. Any parse, size-bound, or tokenizer failure degrades cleanly
+/// to `status: "unknown"`.
+fn estimate_history_budget(rows: Option<&[String]>) -> Value {
+    let Some(rows) = rows else {
+        return unknown_history_budget();
+    };
+    let mut tokens: usize = 0;
+    for raw in rows {
+        let Ok(content) = serde_json::from_str::<Value>(raw) else {
+            return unknown_history_budget();
+        };
+        let Some(parts) = content.as_array() else {
+            continue;
+        };
+        tokens = tokens.saturating_add(crate::model_cost::PER_MESSAGE_OVERHEAD);
+        for part in parts {
+            let Ok(count) = estimate_part_tokens(part) else {
+                return unknown_history_budget();
+            };
+            tokens = tokens.saturating_add(count);
+        }
+    }
+    json!({
         "status": "estimated",
         "value": tokens,
         "unit": "tokens",
         "source": "history_entries",
-    }))
+    })
 }
 
 /// The session's compaction state for `inspect`: `"none"` (nothing has ever
@@ -729,58 +903,248 @@ fn split_frontmatter(raw: &str) -> (Option<String>, String) {
 /// the `commands.rs` dirent-type checks). `base` carries the path already
 /// descended relative to the namespace root, so a nested file's styleId keeps
 /// its directory prefix (`styleId = <namespace>:<相对路径去.md>`).
+fn style_path_escape(message: String) -> ContractError {
+    ContractError::new(
+        CODE_PATH_ESCAPE,
+        message,
+        RetrySpec::never(),
+        EffectStatus::NotApplied,
+    )
+}
+
+fn open_style_file_nofollow(path: &Path) -> std::io::Result<std::fs::File> {
+    let mut opts = std::fs::OpenOptions::new();
+    opts.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    opts.open(path)
+}
+
+/// Inspects each path component from `boundary_root` down to the target styles
+/// directory with `symlink_metadata`, refusing symlinks and verifying canonical
+/// containment via `files::require_within`.
+fn check_styles_root_dir(
+    boundary_root: &Path,
+    components: &[&Path],
+    display_root: &Path,
+) -> Result<Option<PathBuf>, ContractError> {
+    let mut last_path: Option<PathBuf> = None;
+    for (idx, path) in components.iter().enumerate() {
+        let meta = match std::fs::symlink_metadata(path) {
+            Ok(meta) => meta,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => {
+                return Err(context_unavailable(format!(
+                    "styles directory `{}` cannot be inspected: {error}",
+                    path.display()
+                )));
+            }
+        };
+        if meta.file_type().is_symlink() {
+            return Err(style_path_escape(format!(
+                "styles directory `{}` must not be a symlink",
+                display_root.display()
+            )));
+        }
+        if meta.is_dir() {
+            let canonical = std::fs::canonicalize(path).map_err(|error| {
+                context_unavailable(format!(
+                    "styles directory `{}` cannot be resolved: {error}",
+                    path.display()
+                ))
+            })?;
+            require_within(boundary_root, &canonical)?;
+            last_path = Some(canonical);
+        } else if idx + 1 == components.len() {
+            return Ok(Some((*path).to_path_buf()));
+        } else {
+            return Err(context_unavailable(format!(
+                "styles directory `{}` parent is not a directory",
+                display_root.display()
+            )));
+        }
+    }
+    Ok(last_path)
+}
+
+/// Iteratively scans one style namespace with bounded depth (`MAX_STYLE_DEPTH`),
+/// bounded file count (`MAX_STYLE_FILES`), per-file byte limit
+/// (`MAX_STYLE_FILE_BYTES`), canonical containment verification, and `O_NOFOLLOW`
+/// regular-file reads. Missing roots contribute nothing; unreadable roots fail
+/// (`UNAVAILABLE` — 「加载失败不同于空」); individual bad/oversized/symlinked
+/// entries skip cleanly with diagnostics.
 fn scan_style_dir(
     root: &Path,
-    base: &str,
     namespace: &'static str,
     out: &mut Vec<StyleFile>,
     diagnostics: &mut Vec<StyleDiagnostic>,
 ) -> Result<(), ContractError> {
-    let entries = match std::fs::read_dir(root) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => {
-            return Err(context_unavailable(format!(
-                "styles directory `{}` cannot be read: {error}",
-                root.display()
-            )));
-        }
-    };
-    let mut entries: Vec<_> = entries.flatten().collect();
-    entries.sort_by_key(|entry| entry.file_name());
-    for entry in entries {
-        let Ok(file_type) = entry.file_type() else {
-            continue;
-        };
-        let path = entry.path();
-        if file_type.is_dir() {
-            let name = entry.file_name().to_string_lossy().replace('\\', "/");
-            let child_base = if base.is_empty() {
-                name
-            } else {
-                format!("{base}/{name}")
-            };
-            scan_style_dir(&path, &child_base, namespace, out, diagnostics)?;
-            continue;
-        }
-        if !file_type.is_file() || !entry.file_name().to_string_lossy().ends_with(".md") {
-            continue;
-        }
-        let leaf = entry.file_name().to_string_lossy().replace('\\', "/");
-        let relative = if base.is_empty() {
-            leaf
-        } else {
-            format!("{base}/{leaf}")
-        };
-        let relative = relative.strip_suffix(".md").unwrap_or(&relative).to_owned();
-        if relative.is_empty() {
-            continue;
-        }
-        let bytes = match std::fs::read(&path) {
-            Ok(bytes) => bytes,
+    let mut stack: Vec<(PathBuf, String, usize)> = vec![(root.to_path_buf(), String::new(), 0)];
+    let mut files_seen: usize = 0;
+    let mut file_limit_notified = false;
+
+    while let Some((dir_path, base, depth)) = stack.pop() {
+        let entries = match std::fs::read_dir(&dir_path) {
+            Ok(entries) => entries,
+            Err(error) if depth == 0 && error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(());
+            }
+            Err(error) if depth == 0 => {
+                return Err(context_unavailable(format!(
+                    "styles directory `{}` cannot be read: {error}",
+                    dir_path.display()
+                )));
+            }
             Err(error) => {
-                // A bad style file is skipped with a diagnostic; the valid
-                // entries stay listed (「坏风格保留旧有效目录」).
+                diagnostics.push(StyleDiagnostic {
+                    code: "STYLE_UNREADABLE",
+                    message: format!(
+                        "style directory `{namespace}:{base}` cannot be read: {error}"
+                    ),
+                    resource_id: None,
+                });
+                continue;
+            }
+        };
+        let mut entries: Vec<_> = entries.flatten().collect();
+        entries.sort_by_key(|entry| entry.file_name());
+        let mut subdirs: Vec<(PathBuf, String, usize)> = Vec::new();
+
+        for entry in entries {
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            let name_str = entry.file_name().to_string_lossy().replace('\\', "/");
+            let path = entry.path();
+            let rel_path = if base.is_empty() {
+                name_str.clone()
+            } else {
+                format!("{base}/{name_str}")
+            };
+
+            if file_type.is_symlink() {
+                diagnostics.push(StyleDiagnostic {
+                    code: "STYLE_SYMLINK_SKIPPED",
+                    message: format!("skipping symlinked style entry `{namespace}:{rel_path}`"),
+                    resource_id: None,
+                });
+                continue;
+            }
+            if file_type.is_dir() {
+                if depth >= MAX_STYLE_DEPTH {
+                    diagnostics.push(StyleDiagnostic {
+                        code: "STYLE_DEPTH_LIMIT",
+                        message: format!(
+                            "style directory `{namespace}:{rel_path}` exceeds max depth ({MAX_STYLE_DEPTH})"
+                        ),
+                        resource_id: None,
+                    });
+                    continue;
+                }
+                let Ok(meta) = std::fs::symlink_metadata(&path) else {
+                    continue;
+                };
+                if meta.file_type().is_symlink() {
+                    diagnostics.push(StyleDiagnostic {
+                        code: "STYLE_SYMLINK_SKIPPED",
+                        message: format!(
+                            "skipping symlinked style directory `{namespace}:{rel_path}`"
+                        ),
+                        resource_id: None,
+                    });
+                    continue;
+                }
+                if !meta.is_dir() {
+                    continue;
+                }
+                let canonical = std::fs::canonicalize(&path).map_err(|error| {
+                    context_unavailable(format!(
+                        "style directory `{namespace}:{rel_path}` cannot be resolved: {error}"
+                    ))
+                })?;
+                require_within(root, &canonical)?;
+                subdirs.push((canonical, rel_path, depth + 1));
+                continue;
+            }
+            if !file_type.is_file() || !name_str.ends_with(".md") {
+                continue;
+            }
+            let Some(relative) = rel_path.strip_suffix(".md").map(str::to_owned) else {
+                continue;
+            };
+            if relative.is_empty() {
+                continue;
+            }
+            if files_seen >= MAX_STYLE_FILES {
+                if !file_limit_notified {
+                    diagnostics.push(StyleDiagnostic {
+                        code: "STYLE_FILE_LIMIT",
+                        message: format!(
+                            "style catalog limit ({MAX_STYLE_FILES} files) reached in `{namespace}` namespace"
+                        ),
+                        resource_id: None,
+                    });
+                    file_limit_notified = true;
+                }
+                break;
+            }
+            files_seen += 1;
+
+            let file = match open_style_file_nofollow(&path) {
+                Ok(file) => file,
+                Err(error) if error.raw_os_error() == Some(libc::ELOOP) => {
+                    diagnostics.push(StyleDiagnostic {
+                        code: "STYLE_SYMLINK_SKIPPED",
+                        message: format!("skipping symlinked style file `{namespace}:{relative}`"),
+                        resource_id: Some(format!("{namespace}:{relative}")),
+                    });
+                    continue;
+                }
+                Err(error) => {
+                    diagnostics.push(StyleDiagnostic {
+                        code: "STYLE_UNREADABLE",
+                        message: format!(
+                            "style file `{namespace}:{relative}` cannot be read: {error}"
+                        ),
+                        resource_id: Some(format!("{namespace}:{relative}")),
+                    });
+                    continue;
+                }
+            };
+            let Ok(meta) = file.metadata() else {
+                diagnostics.push(StyleDiagnostic {
+                    code: "STYLE_UNREADABLE",
+                    message: format!("style file `{namespace}:{relative}` metadata unavailable"),
+                    resource_id: Some(format!("{namespace}:{relative}")),
+                });
+                continue;
+            };
+            if !meta.is_file() {
+                diagnostics.push(StyleDiagnostic {
+                    code: "STYLE_UNREADABLE",
+                    message: format!("style file `{namespace}:{relative}` is not a regular file"),
+                    resource_id: Some(format!("{namespace}:{relative}")),
+                });
+                continue;
+            }
+            if meta.len() > MAX_STYLE_FILE_BYTES as u64 {
+                diagnostics.push(StyleDiagnostic {
+                    code: "STYLE_TOO_LARGE",
+                    message: format!(
+                        "style file `{namespace}:{relative}` exceeds maximum size ({MAX_STYLE_FILE_BYTES} bytes)"
+                    ),
+                    resource_id: Some(format!("{namespace}:{relative}")),
+                });
+                continue;
+            }
+            let mut bytes = Vec::new();
+            if let Err(error) = file
+                .take((MAX_STYLE_FILE_BYTES + 1) as u64)
+                .read_to_end(&mut bytes)
+            {
                 diagnostics.push(StyleDiagnostic {
                     code: "STYLE_UNREADABLE",
                     message: format!("style file `{namespace}:{relative}` cannot be read: {error}"),
@@ -788,29 +1152,42 @@ fn scan_style_dir(
                 });
                 continue;
             }
-        };
-        let raw = String::from_utf8_lossy(&bytes);
-        let (_block, body) = split_frontmatter(&raw);
-        if body.trim().is_empty() {
-            diagnostics.push(StyleDiagnostic {
-                code: "STYLE_EMPTY",
-                message: format!(
-                    "style file `{namespace}:{relative}` has no content; a style is \
-                     prompt content and cannot be empty"
+            if bytes.len() > MAX_STYLE_FILE_BYTES {
+                diagnostics.push(StyleDiagnostic {
+                    code: "STYLE_TOO_LARGE",
+                    message: format!(
+                        "style file `{namespace}:{relative}` exceeds maximum size ({MAX_STYLE_FILE_BYTES} bytes)"
+                    ),
+                    resource_id: Some(format!("{namespace}:{relative}")),
+                });
+                continue;
+            }
+            let raw = String::from_utf8_lossy(&bytes);
+            let (_block, body) = split_frontmatter(&raw);
+            if body.trim().is_empty() {
+                diagnostics.push(StyleDiagnostic {
+                    code: "STYLE_EMPTY",
+                    message: format!(
+                        "style file `{namespace}:{relative}` has no content; a style is \
+                         prompt content and cannot be empty"
+                    ),
+                    resource_id: Some(format!("{namespace}:{relative}")),
+                });
+                continue;
+            }
+            let name = relative.rsplit('/').next().unwrap_or(&relative).to_owned();
+            out.push(StyleFile {
+                style_id: format!("{namespace}:{relative}"),
+                name,
+                revision: format!(
+                    "stylerev-{}",
+                    &format!("{:x}", Sha256::digest(&bytes))[..24]
                 ),
-                resource_id: Some(format!("{namespace}:{relative}")),
             });
-            continue;
         }
-        let name = relative.rsplit('/').next().unwrap_or(&relative).to_owned();
-        out.push(StyleFile {
-            style_id: format!("{namespace}:{relative}"),
-            name,
-            revision: format!(
-                "stylerev-{}",
-                &format!("{:x}", Sha256::digest(&bytes))[..24]
-            ),
-        });
+        for subdir in subdirs.into_iter().rev() {
+            stack.push(subdir);
+        }
     }
     Ok(())
 }
@@ -827,13 +1204,15 @@ fn style_catalog(
     if let ContextScope::Project { project_id } | ContextScope::Session { project_id, .. } = scope {
         match resolve_project(rt.store(), project_id) {
             Ok(workspace) => {
-                scan_style_dir(
-                    &workspace.workspace.join(".pilotdeck").join("styles"),
-                    "",
-                    "project",
-                    &mut files,
-                    &mut diagnostics,
-                )?;
+                let pilotdeck_dir = workspace.workspace.join(".pilotdeck");
+                let project_styles = pilotdeck_dir.join("styles");
+                if let Some(verified_root) = check_styles_root_dir(
+                    &workspace.workspace,
+                    &[&pilotdeck_dir, &project_styles],
+                    &project_styles,
+                )? {
+                    scan_style_dir(&verified_root, "project", &mut files, &mut diagnostics)?;
+                }
             }
             // A virtual project (no host-declared root) contributes no
             // project namespace — the TS scan of a missing directory.
@@ -846,13 +1225,16 @@ fn style_catalog(
             Err(crate::public_v1::domains::files::ProjectResolveError::NotFound(_)) => {}
         }
     }
-    scan_style_dir(
-        &rt.store().home().join("styles"),
-        "",
-        "user",
-        &mut files,
-        &mut diagnostics,
-    )?;
+    let home_root = std::fs::canonicalize(rt.store().home()).map_err(|error| {
+        context_unavailable(format!(
+            "instance home `{}` cannot be resolved: {error}",
+            rt.store().home().display()
+        ))
+    })?;
+    let user_styles = rt.store().home().join("styles");
+    if let Some(verified_user) = check_styles_root_dir(&home_root, &[&user_styles], &user_styles)? {
+        scan_style_dir(&verified_user, "user", &mut files, &mut diagnostics)?;
+    }
     let mut seen: Vec<String> = Vec::new();
     files.retain(|file| {
         if seen.contains(&file.name) {
@@ -989,85 +1371,124 @@ async fn context_inspect(
         .filter(|value| !value.is_empty())
         .ok_or_else(|| context_invalid_argument("`sessionId` is required"))?
         .to_owned();
-    let session = rt
-        .store()
-        .get_session(&session_id)
-        .map_err(|_| context_not_found("session", &session_id))?;
-    // `get_session` wraps the row: {"session": {...}, "snapshotCursor"}.
-    let Some(project_id) = session["session"].get("projectId").and_then(Value::as_str) else {
-        return Err(
-            context_invalid_argument(format!("session `{session_id}` has no project")).into(),
-        );
-    };
-    let scope = ContextScope::Session {
-        project_id: project_id.to_owned(),
-        session_id: session_id.clone(),
-    };
+    let run_id = input
+        .get("runId")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let rt_cloned = Arc::clone(&rt);
+    let payload = tokio::task::spawn_blocking(move || -> Result<Value, ContractError> {
+        let store = rt_cloned.store();
+        let session = store
+            .get_session(&session_id)
+            .map_err(|_| context_not_found("session", &session_id))?;
+        // `get_session` wraps the row: {"session": {...}, "snapshotCursor"}.
+        let Some(project_id) = session["session"].get("projectId").and_then(Value::as_str) else {
+            return Err(context_invalid_argument(format!(
+                "session `{session_id}` has no project"
+            )));
+        };
+        let scope = ContextScope::Session {
+            project_id: project_id.to_owned(),
+            session_id: session_id.clone(),
+        };
 
-    // Optional run observation: the run must exist and belong to this
-    // session (`NOT_FOUND` otherwise — it is in this operation's error list).
-    let run_view = match input.get("runId").and_then(Value::as_str) {
-        None => None,
-        Some(run_id) => {
-            let run = rt
-                .store()
-                .get_run(run_id)
-                .map_err(|_| context_not_found("run", run_id))?;
-            if run.session_id != session_id {
-                return Err(context_not_found("run in this session", run_id).into());
+        // Optional run observation: the run must exist and belong to this
+        // session (`NOT_FOUND` otherwise — it is in this operation's error list).
+        let run_view = match run_id.as_deref() {
+            None => None,
+            Some(rid) => {
+                let run = store
+                    .get_run(rid)
+                    .map_err(|_| context_not_found("run", rid))?;
+                if run.session_id != session_id {
+                    return Err(context_not_found("run in this session", rid));
+                }
+                Some((
+                    run.state.as_str().to_owned(),
+                    run.config_revision.clone(),
+                    run.effective_generation.clone(),
+                ))
             }
-            Some((
-                run.state.as_str().to_owned(),
-                run.config_revision.clone(),
-                run.effective_generation.clone(),
-            ))
+        };
+
+        let (
+            view,
+            entry_count,
+            turn_count,
+            history_rows,
+            model,
+            compaction,
+            effective_generation,
+        ) = {
+            let conn = store
+                .conn
+                .lock()
+                .map_err(|_| context_unavailable("sqlite mutex poisoned"))?;
+            let view = resolve_settings(&conn, &store.meta().initialization_revision, &scope)?;
+            let (entry_count, turn_count) = history_counts(&conn, &session_id)?;
+            let history_rows = fetch_history_content_rows(&conn, &session_id, entry_count)?;
+            let model = effective_model(&conn, &scope)?;
+            let compaction = compaction_state(&conn, &session_id)?;
+            let effective_generation =
+                crate::public_v1::domains::configuration::current_effective_generation_or(
+                    &conn,
+                    &store.meta().generation,
+                )?;
+            (
+                view,
+                entry_count,
+                turn_count,
+                history_rows,
+                model,
+                compaction,
+                effective_generation,
+            )
+        };
+        // BPE tokenization and JSON parsing happen after releasing `store.conn`
+        // inside `spawn_blocking`.
+        let budget = estimate_history_budget(history_rows.as_deref());
+
+        // The composition observation: server-derived pairs only — no raw
+        // internal snapshots leave the gateway (「不泄露原始内部快照」).
+        let mut sources: Vec<Value> = vec![
+            json!({"key": "historyEntryCount", "value": entry_count}),
+            json!({"key": "historyTurnCount", "value": turn_count}),
+            json!({"key": "thinking", "value": view.thinking}),
+            json!({"key": "thinkingSourceScope", "value": view.thinking_source.0.to_scope_json()}),
+            json!({"key": "outputStyleId", "value": view.output_style_id}),
+            json!({"key": "outputStyleSourceScope", "value": view.style_source.0.to_scope_json()}),
+            // 「实际模型配置可核对」: the effective model through the models
+            // domain's own selection chain (session→project→instance).
+            json!({"key": "effectiveModel", "value": match &model {
+                Some((provider_id, model_id)) => json!({"providerId": provider_id, "modelId": model_id}),
+                None => Value::Null,
+            }}),
+            json!({"key": "compactionState", "value": compaction}),
+        ];
+        if let Some((state, config_revision, generation)) = run_view {
+            // The run's submit-time execution snapshot — the same values
+            // `run.get` reports, proving the in-flight turn keeps its own view.
+            sources.push(json!({"key": "runState", "value": state}));
+            sources.push(json!({"key": "runConfigRevision", "value": config_revision}));
+            sources.push(json!({"key": "runEffectiveGeneration", "value": generation}));
         }
-    };
 
-    let store = rt.store();
-    let conn = store.conn.lock().expect("sqlite mutex");
-    let view = resolve_settings(&conn, &store.meta().initialization_revision, &scope)?;
-    let (entry_count, turn_count) = history_counts(&conn, &session_id)?;
-    let budget = history_budget(&conn, &session_id)?;
-    let model = effective_model(&conn, &scope)?;
-    let compaction = compaction_state(&conn, &session_id)?;
-    drop(conn);
-
-    // The composition observation: server-derived pairs only — no raw
-    // internal snapshots leave the gateway (「不泄露原始内部快照」).
-    let mut sources: Vec<Value> = vec![
-        json!({"key": "historyEntryCount", "value": entry_count}),
-        json!({"key": "historyTurnCount", "value": turn_count}),
-        json!({"key": "thinking", "value": view.thinking}),
-        json!({"key": "thinkingSourceScope", "value": view.thinking_source.0.to_scope_json()}),
-        json!({"key": "outputStyleId", "value": view.output_style_id}),
-        json!({"key": "outputStyleSourceScope", "value": view.style_source.0.to_scope_json()}),
-        // 「实际模型配置可核对」: the effective model through the models
-        // domain's own selection chain (session→project→instance).
-        json!({"key": "effectiveModel", "value": match &model {
-            Some((provider_id, model_id)) => json!({"providerId": provider_id, "modelId": model_id}),
-            None => Value::Null,
-        }}),
-        json!({"key": "compactionState", "value": compaction}),
-    ];
-    if let Some((state, config_revision, generation)) = run_view {
-        // The run's submit-time execution snapshot — the same values
-        // `run.get` reports, proving the in-flight turn keeps its own view.
-        sources.push(json!({"key": "runState", "value": state}));
-        sources.push(json!({"key": "runConfigRevision", "value": config_revision}));
-        sources.push(json!({"key": "runEffectiveGeneration", "value": generation}));
-    }
-
-    Ok((
-        ResponseOutcome::Succeeded,
-        json!({
+        Ok(json!({
             "sources": sources,
             "budget": budget,
             "compactionState": compaction,
             "revision": view.revision,
-            "effectiveGeneration": store.meta().generation,
-        }),
-    ))
+            "effectiveGeneration": effective_generation,
+        }))
+    })
+    .await
+    .map_err(|err| {
+        DispatchError::from(context_unavailable(format!(
+            "blocking context inspect failed: {err}"
+        )))
+    })??;
+
+    Ok((ResponseOutcome::Succeeded, payload))
 }
 
 // ---------------------------------------------------------------------------
@@ -1078,30 +1499,43 @@ async fn context_styles(
     rt: Arc<PublicV1Runtime>,
     input: Value,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
-    let scope = parse_scope(&rt, &input)?;
-    let (offset, limit) = parse_page(input.get("page"))?;
-    let store = rt.store();
-    let snapshot_revision = {
-        let conn = store.conn.lock().expect("sqlite mutex");
-        style_state_revision(&conn, &store.meta().initialization_revision, &scope)?
-    };
-    let (catalog, _diagnostics) = style_catalog(&rt, &scope)?;
-    let total = catalog.len();
-    if offset > total {
-        return Err(context_invalid_argument("pagination cursor beyond end of collection").into());
-    }
-    let end = offset.saturating_add(limit).min(total);
-    let items: Vec<Value> = catalog[offset..end]
-        .iter()
-        .map(|style| style.item_json())
-        .collect();
-    Ok((
-        ResponseOutcome::Succeeded,
-        json!({
+    let rt_cloned = Arc::clone(&rt);
+    let payload = tokio::task::spawn_blocking(move || -> Result<Value, ContractError> {
+        let scope = parse_scope(&rt_cloned, &input)?;
+        let (offset, limit) = parse_page(input.get("page"))?;
+        let store = rt_cloned.store();
+        let snapshot_revision = {
+            let conn = store
+                .conn
+                .lock()
+                .map_err(|_| context_unavailable("sqlite mutex poisoned"))?;
+            style_state_revision(&conn, &store.meta().initialization_revision, &scope)?
+        };
+        let (catalog, _diagnostics) = style_catalog(&rt_cloned, &scope)?;
+        let total = catalog.len();
+        if offset > total {
+            return Err(context_invalid_argument(
+                "pagination cursor beyond end of collection",
+            ));
+        }
+        let end = offset.saturating_add(limit).min(total);
+        let items: Vec<Value> = catalog[offset..end]
+            .iter()
+            .map(|style| style.item_json())
+            .collect();
+        Ok(json!({
             "items": items,
             "pageInfo": page_info(&snapshot_revision, end, total),
-        }),
-    ))
+        }))
+    })
+    .await
+    .map_err(|err| {
+        DispatchError::from(context_unavailable(format!(
+            "blocking context styles failed: {err}"
+        )))
+    })??;
+
+    Ok((ResponseOutcome::Succeeded, payload))
 }
 
 // ---------------------------------------------------------------------------
@@ -1119,165 +1553,184 @@ async fn context_configure(
         .filter(|value| !value.is_empty())
         .ok_or_else(|| context_invalid_argument("`sessionId` is required"))?
         .to_owned();
-    // The error list carries no NOT_FOUND: a missing session is malformed
-    // input for this write (the `parse_scope` precedent).
-    let session = rt
-        .store()
-        .get_session(&session_id)
-        .map_err(|_| context_invalid_argument(format!("session `{session_id}` does not exist")))?;
-    // `get_session` wraps the row: {"session": {...}, "snapshotCursor"}.
-    let Some(project_id) = session["session"].get("projectId").and_then(Value::as_str) else {
-        return Err(
-            context_invalid_argument(format!("session `{session_id}` has no project")).into(),
-        );
-    };
-    let scope = ContextScope::Session {
-        project_id: project_id.to_owned(),
-        session_id: session_id.clone(),
-    };
+    let rt_cloned = Arc::clone(&rt);
+    let (changed, payload) =
+        tokio::task::spawn_blocking(move || -> Result<(bool, Value), ContractError> {
+            let store = rt_cloned.store();
+            // The error list carries no NOT_FOUND: a missing session is malformed
+            // input for this write (the `parse_scope` precedent).
+            let session = store.get_session(&session_id).map_err(|_| {
+                context_invalid_argument(format!("session `{session_id}` does not exist"))
+            })?;
+            // `get_session` wraps the row: {"session": {...}, "snapshotCursor"}.
+            let Some(project_id) = session["session"].get("projectId").and_then(Value::as_str)
+            else {
+                return Err(context_invalid_argument(format!(
+                    "session `{session_id}` has no project"
+                )));
+            };
+            let scope = ContextScope::Session {
+                project_id: project_id.to_owned(),
+                session_id: session_id.clone(),
+            };
 
-    // Envelope-level expectedRevision wins over the input field (the
-    // `model_selection.set` precedence).
-    let expected = expected_revision
-        .as_deref()
-        .or_else(|| input.get("expectedRevision").and_then(Value::as_str))
-        .unwrap_or_default()
-        .to_owned();
+            // Envelope-level expectedRevision wins over the input field (the
+            // `model_selection.set` precedence).
+            let expected = expected_revision
+                .as_deref()
+                .or_else(|| input.get("expectedRevision").and_then(Value::as_str))
+                .unwrap_or_default()
+                .to_owned();
 
-    // Present-vs-absent distinction: `null` clears, omission preserves
-    // (「null清除/省略保留」).
-    let requested_thinking = input.get("thinking");
-    let requested_style = input.get("outputStyleId");
+            // Present-vs-absent distinction: `null` clears, omission preserves
+            // (「null清除/省略保留」).
+            let requested_thinking = input.get("thinking");
+            let requested_style = input.get("outputStyleId");
 
-    // Read-only validations before the CAS transaction.
-    if let Some(Value::String(level)) = requested_thinking
-        && !THINKING_MODES.contains(&level.as_str())
-    {
-        return Err(context_invalid_argument(format!(
-            "thinking must be one of {THINKING_MODES:?}; got `{level}`"
-        ))
-        .into());
-    }
-    if let Some(Value::String(style_id)) = requested_style {
-        let (catalog, _diagnostics) = style_catalog(&rt, &scope)?;
-        if !catalog.iter().any(|style| style.style_id == *style_id) {
-            return Err(style_not_found(style_id).into());
-        }
-    }
+            // Read-only validations before the CAS transaction (filesystem scan
+            // happens outside any SQLite lock).
+            if let Some(Value::String(level)) = requested_thinking
+                && !THINKING_MODES.contains(&level.as_str())
+            {
+                return Err(context_invalid_argument(format!(
+                    "thinking must be one of {THINKING_MODES:?}; got `{level}`"
+                )));
+            }
+            if let Some(Value::String(style_id)) = requested_style {
+                let (catalog, _diagnostics) = style_catalog(&rt_cloned, &scope)?;
+                if !catalog.iter().any(|style| style.style_id == *style_id) {
+                    return Err(style_not_found(style_id));
+                }
+            }
 
-    let store = rt.store();
-    let mut conn = store.conn.lock().expect("sqlite mutex");
-    let tx = conn.transaction().map_err(context_sql_err)?;
+            let mut conn = store
+                .conn
+                .lock()
+                .map_err(|_| context_unavailable("sqlite mutex poisoned"))?;
+            let tx = conn
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(context_sql_err)?;
 
-    // CAS against the session's chain revision.
-    let current = resolve_settings(&tx, &store.meta().initialization_revision, &scope)?;
-    if current.revision != expected {
-        return Err(context_revision_conflict(&expected, &current.revision).into());
-    }
-    // 「不支持thinking拒绝」: the effective model must declare support for
-    // the requested effort level (after the CAS so the conflict answer wins).
-    if let Some(Value::String(level)) = requested_thinking {
-        check_thinking_support(&tx, &scope, level)?;
-    }
+            // CAS against the session's chain revision.
+            let current = resolve_settings(&tx, &store.meta().initialization_revision, &scope)?;
+            if current.revision != expected {
+                return Err(context_revision_conflict(&expected, &current.revision));
+            }
+            // 「不支持thinking拒绝」: the effective model must declare support for
+            // the requested effort level (after the CAS so the conflict answer wins).
+            if let Some(Value::String(level)) = requested_thinking {
+                check_thinking_support(&tx, &scope, level)?;
+            }
 
-    let own = load_setting(&tx, &scope)?;
-    let new_thinking = match requested_thinking {
-        Some(Value::Null) => None,
-        Some(Value::String(level)) => Some(level.clone()),
-        _ => own.as_ref().and_then(|row| row.thinking.clone()),
-    };
-    let new_style = match requested_style {
-        Some(Value::Null) => None,
-        Some(Value::String(style_id)) => Some(style_id.clone()),
-        _ => own.as_ref().and_then(|row| row.output_style_id.clone()),
-    };
-    let changed = match &own {
-        Some(row) => row.thinking != new_thinking || row.output_style_id != new_style,
-        None => new_thinking.is_some() || new_style.is_some(),
-    };
-    let now = crate::public_v1::store::now_rfc3339();
-    if changed {
-        let new_revision = context_next_rev_in_tx(&tx)?;
-        if new_thinking.is_none() && new_style.is_none() {
-            // Clearing the last field removes the session's override row —
-            // the ancestor layers show through again.
-            tx.execute(
-                "DELETE FROM v1_context_settings WHERE scope_key = ?1",
-                params![scope.key()],
-            )
-            .map_err(context_sql_err)?;
-        } else {
-            tx.execute(
-                "INSERT INTO v1_context_settings
-                     (scope_key, scope_json, thinking, output_style_id, revision, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-                 ON CONFLICT(scope_key) DO UPDATE SET
-                    scope_json = excluded.scope_json,
-                    thinking = excluded.thinking,
-                    output_style_id = excluded.output_style_id,
-                    revision = excluded.revision,
-                    updated_at = excluded.updated_at",
-                params![
-                    scope.key(),
-                    serde_json::to_string(&scope.to_scope_json()).unwrap_or_default(),
-                    new_thinking,
-                    new_style,
-                    new_revision,
-                    now,
-                ],
-            )
-            .map_err(context_sql_err)?;
-        }
-        // The contract's declared event (`configuration.changed`). The
-        // in-flight runs are untouched — they keep their submit-time
-        // snapshot (`store.rs::submit_run` writes it at queue time), so a
-        // running turn is never hot-swapped (「在途run不热换」).
-        append_context_event_in_tx(
-            &tx,
-            &scope.key(),
-            &session_id,
-            "configuration.changed",
-            &json!({
-                "sessionId": session_id,
-                "thinking": new_thinking,
-                "outputStyleId": new_style,
-                "revision": new_revision,
-            }),
-            &now,
-        )?;
-    }
-    tx.commit().map_err(context_sql_err)?;
-    drop(conn);
-    if changed {
-        store.event_notifier().notify_waiters();
-        store.state_notifier().notify_waiters();
-    }
+            let own = load_setting(&tx, &scope)?;
+            let new_thinking = match requested_thinking {
+                Some(Value::Null) => None,
+                Some(Value::String(level)) => Some(level.clone()),
+                _ => own.as_ref().and_then(|row| row.thinking.clone()),
+            };
+            let new_style = match requested_style {
+                Some(Value::Null) => None,
+                Some(Value::String(style_id)) => Some(style_id.clone()),
+                _ => own.as_ref().and_then(|row| row.output_style_id.clone()),
+            };
+            let changed = match &own {
+                Some(row) => row.thinking != new_thinking || row.output_style_id != new_style,
+                None => new_thinking.is_some() || new_style.is_some(),
+            };
+            let now = crate::public_v1::store::now_rfc3339();
+            if changed {
+                let new_revision = context_next_rev_in_tx(&tx)?;
+                if new_thinking.is_none() && new_style.is_none() {
+                    // Clearing the last field removes the session's override row —
+                    // the ancestor layers show through again.
+                    tx.execute(
+                        "DELETE FROM v1_context_settings WHERE scope_key = ?1",
+                        params![scope.key()],
+                    )
+                    .map_err(context_sql_err)?;
+                } else {
+                    tx.execute(
+                        "INSERT INTO v1_context_settings
+                             (scope_key, scope_json, thinking, output_style_id, revision, updated_at)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                         ON CONFLICT(scope_key) DO UPDATE SET
+                            scope_json = excluded.scope_json,
+                            thinking = excluded.thinking,
+                            output_style_id = excluded.output_style_id,
+                            revision = excluded.revision,
+                            updated_at = excluded.updated_at",
+                        params![
+                            scope.key(),
+                            serde_json::to_string(&scope.to_scope_json()).unwrap_or_default(),
+                            new_thinking,
+                            new_style,
+                            new_revision,
+                            now,
+                        ],
+                    )
+                    .map_err(context_sql_err)?;
+                }
+                // The contract's declared event (`configuration.changed`). The
+                // in-flight runs are untouched — they keep their submit-time
+                // snapshot (`store.rs::submit_run` writes it at queue time), so a
+                // running turn is never hot-swapped (「在途run不热换」).
+                append_context_event_in_tx(
+                    &tx,
+                    &scope.key(),
+                    &session_id,
+                    "configuration.changed",
+                    &json!({
+                        "sessionId": session_id,
+                        "thinking": new_thinking,
+                        "outputStyleId": new_style,
+                        "revision": new_revision,
+                    }),
+                    &now,
+                )?;
+            }
+            tx.commit().map_err(context_sql_err)?;
 
-    // Report the post-write truth: per-key effective values attributed to
-    // the layer that provides them (「有效值和继承来源可读」).
-    let conn = store.conn.lock().expect("sqlite mutex");
-    let after = resolve_settings(&conn, &store.meta().initialization_revision, &scope)?;
-    drop(conn);
-    let setting = |key: &str, value: &Option<String>, source: &(ContextScope, String)| -> Value {
-        json!({
-            "key": key,
-            "value": value,
-            "sourceScope": source.0.to_scope_json(),
-            "sourceRevision": source.1,
-            "sensitive": false,
+            // Report the post-write truth: per-key effective values attributed to
+            // the layer that provides them (「有效值和继承来源可读」).
+            let after = resolve_settings(&conn, &store.meta().initialization_revision, &scope)?;
+            let effective_generation =
+                crate::public_v1::domains::configuration::current_effective_generation_or(
+                    &conn,
+                    &store.meta().generation,
+                )?;
+            let setting = |key: &str, value: &Option<String>, source: &(ContextScope, String)| -> Value {
+                json!({
+                    "key": key,
+                    "value": value,
+                    "sourceScope": source.0.to_scope_json(),
+                    "sourceRevision": source.1,
+                    "sensitive": false,
+                })
+            };
+            Ok((
+                changed,
+                json!({
+                    "revision": after.revision,
+                    "effectiveGeneration": effective_generation,
+                    "values": [
+                        setting("thinking", &after.thinking, &after.thinking_source),
+                        setting("outputStyleId", &after.output_style_id, &after.style_source),
+                    ],
+                }),
+            ))
         })
-    };
-    Ok((
-        ResponseOutcome::Succeeded,
-        json!({
-            "revision": after.revision,
-            "effectiveGeneration": store.meta().generation,
-            "values": [
-                setting("thinking", &after.thinking, &after.thinking_source),
-                setting("outputStyleId", &after.output_style_id, &after.style_source),
-            ],
-        }),
-    ))
+        .await
+        .map_err(|err| {
+            DispatchError::from(context_unavailable(format!(
+                "blocking context configure failed: {err}"
+            )))
+        })??;
+
+    if changed {
+        rt.store().event_notifier().notify_waiters();
+        rt.store().state_notifier().notify_waiters();
+    }
+    Ok((ResponseOutcome::Succeeded, payload))
 }
 
 // ---------------------------------------------------------------------------
@@ -1286,18 +1739,28 @@ async fn context_configure(
 
 /// The reload's execution after acceptance: re-scan the catalog (bad files
 /// surface as diagnostics while the valid entries stay listed — 「坏风格保留
-/// 旧有效目录」), then advance the scope's applied catalog revision (「成功
-/// revision改变」). Any failure leaves the stored revision untouched.
+/// 旧有效目录」), re-verify `expectedRevision` under `BEGIN IMMEDIATE`, then
+/// advance the scope's applied catalog revision (「成功revision改变」).
 fn reload_styles_execution(
     rt: &PublicV1Runtime,
     scope: &ContextScope,
     session_id: &str,
+    expected: &str,
 ) -> Result<Value, ContractError> {
     let (catalog, diagnostics) = style_catalog(rt, scope)?;
     let diagnostics_json: Vec<Value> = diagnostics.iter().map(StyleDiagnostic::to_json).collect();
     let store = rt.store();
-    let mut conn = store.conn.lock().expect("sqlite mutex");
-    let tx = conn.transaction().map_err(context_sql_err)?;
+    let mut conn = store
+        .conn
+        .lock()
+        .map_err(|_| context_unavailable("sqlite mutex poisoned"))?;
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(context_sql_err)?;
+    let current = style_state_revision(&tx, &store.meta().initialization_revision, scope)?;
+    if expected != current {
+        return Err(context_revision_conflict(expected, &current));
+    }
     let new_revision = context_next_rev_in_tx(&tx)?;
     let now = crate::public_v1::store::now_rfc3339();
     tx.execute(
@@ -1333,95 +1796,117 @@ async fn context_reload_styles(
     input: Value,
     idempotency_key: Option<String>,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
-    let scope = parse_scope(&rt, &input)?;
-    let expected = input
-        .get("expectedRevision")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_owned();
-    let db = context_domain_db(&rt)?;
-    let store = rt.store();
+    let rt_cloned = Arc::clone(&rt);
+    let (should_notify, receipt) =
+        tokio::task::spawn_blocking(move || -> Result<(bool, Value), ContractError> {
+            let scope = parse_scope(&rt_cloned, &input)?;
+            let expected = input
+                .get("expectedRevision")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned();
+            let db = context_domain_db(&rt_cloned)?;
+            let store = rt_cloned.store();
 
-    let session_id = match &scope {
-        ContextScope::Session { session_id, .. } => session_id.clone(),
-        _ => String::new(),
-    };
-    let scope_for_validation = scope.clone();
-    let store_for_validation = store.clone();
-    let validation = move || {
-        let conn = store_for_validation.conn.lock().expect("sqlite mutex");
-        let current = style_state_revision(
-            &conn,
-            &store_for_validation.meta().initialization_revision,
-            &scope_for_validation,
-        )?;
-        if expected != current {
-            return Err(context_revision_conflict(&expected, &current));
-        }
-        Ok(())
-    };
-    let operation = accept_domain_operation(
-        &db,
-        "context.reload_styles",
-        &input,
-        idempotency_key.as_deref(),
-        || format!("op-{}", rt.store().next_id()),
-        validation,
-    )?;
-    // A deduplicated replay answers with the original receipt and must NOT
-    // re-execute: the reload already applied (its revision bump is durable),
-    // and running it again would double-apply the very operation the key
-    // deduplicates — the follow-up CAS against the advanced revision would
-    // then falsely conflict.
-    if operation.receipt.get("deduplicated") == Some(&json!(true)) {
-        return Ok((ResponseOutcome::Accepted, operation.receipt));
-    }
-    let operation_id = operation.operation_id.clone();
+            let session_id = match &scope {
+                ContextScope::Session { session_id, .. } => session_id.clone(),
+                _ => String::new(),
+            };
+            let scope_for_validation = scope.clone();
+            let store_for_validation = store.clone();
+            let expected_for_validation = expected.clone();
+            let validation = move || {
+                let conn = store_for_validation
+                    .conn
+                    .lock()
+                    .map_err(|_| context_unavailable("sqlite mutex poisoned"))?;
+                let current = style_state_revision(
+                    &conn,
+                    &store_for_validation.meta().initialization_revision,
+                    &scope_for_validation,
+                )?;
+                if expected_for_validation != current {
+                    return Err(context_revision_conflict(
+                        &expected_for_validation,
+                        &current,
+                    ));
+                }
+                Ok(())
+            };
+            let operation = accept_domain_operation(
+                &db,
+                "context.reload_styles",
+                &input,
+                idempotency_key.as_deref(),
+                || format!("op-{}", rt_cloned.store().next_id()),
+                validation,
+            )?;
+            // A deduplicated replay answers with the original receipt and must NOT
+            // re-execute: the reload already applied (its revision bump is durable),
+            // and running it again would double-apply the very operation the key
+            // deduplicates — the follow-up CAS against the advanced revision would
+            // then falsely conflict.
+            if operation.receipt.get("deduplicated") == Some(&json!(true)) {
+                return Ok((false, operation.receipt));
+            }
+            let operation_id = operation.operation_id.clone();
 
-    // requests.lookup visibility (the `run.submit` / `git.*` /
-    // `configuration.reload` precedent): a fresh acceptance also registers
-    // its idempotent identity in the store's `idempotency_records`, so the
-    // lost-response recovery lookup resolves the operation id. The domain
-    // DB's own dedup table is not what `requests.lookup` reads.
-    if let Some(key) = idempotency_key.as_deref() {
-        record_reload_styles_idempotency(
-            store,
-            key,
-            &compute_input_digest("context.reload_styles", &input),
-            &operation_id,
-            &operation.receipt,
-        )?;
-    }
+            // requests.lookup visibility (the `run.submit` / `git.*` /
+            // `configuration.reload` precedent): a fresh acceptance also registers
+            // its idempotent identity in the store's `idempotency_records`, so the
+            // lost-response recovery lookup resolves the operation id. The domain
+            // DB's own dedup table is not what `requests.lookup` reads.
+            if let Some(key) = idempotency_key.as_deref() {
+                record_context_operation_idempotency(
+                    store,
+                    key,
+                    "context.reload_styles",
+                    &compute_input_digest("context.reload_styles", &input),
+                    &operation_id,
+                    &operation.receipt,
+                )?;
+            }
 
-    let _ = mark_domain_operation_running(&db, &operation_id, &session_id);
-    // A post-accept failure (e.g. the catalog directory turning unreadable)
-    // terminalizes the operation instead of leaving it stuck mid-flight;
-    // the receipt stays the durable answer either way.
-    let (state, completion) = match reload_styles_execution(&rt, &scope, &session_id) {
-        Ok(completion) => ("succeeded".to_owned(), completion),
-        Err(error) => (
-            "failed".to_owned(),
-            json!({"code": error.code, "message": error.message}),
-        ),
-    };
-    if state == "succeeded" {
-        store.event_notifier().notify_waiters();
-        store.state_notifier().notify_waiters();
+            let _ = mark_domain_operation_running(&db, &operation_id, &session_id);
+            // A post-accept failure (e.g. the catalog directory turning unreadable
+            // or a concurrent CAS change) terminalizes the operation instead of
+            // leaving it stuck mid-flight; the receipt stays the durable answer.
+            let (state, completion) =
+                match reload_styles_execution(&rt_cloned, &scope, &session_id, &expected) {
+                    Ok(completion) => ("succeeded".to_owned(), completion),
+                    Err(error) => (
+                        "failed".to_owned(),
+                        json!({"code": error.code, "message": error.message}),
+                    ),
+                };
+            let _ = finish_domain_operation(&db, &operation_id, &session_id, &state, &completion);
+            Ok((state == "succeeded", operation.receipt))
+        })
+        .await
+        .map_err(|err| {
+            DispatchError::from(context_unavailable(format!(
+                "blocking context reload_styles failed: {err}"
+            )))
+        })??;
+
+    if should_notify {
+        rt.store().event_notifier().notify_waiters();
+        rt.store().state_notifier().notify_waiters();
     }
-    let _ = finish_domain_operation(&db, &operation_id, &session_id, &state, &completion);
-    Ok((ResponseOutcome::Accepted, operation.receipt))
+    Ok((ResponseOutcome::Accepted, receipt))
 }
 
 // ---------------------------------------------------------------------------
 // context.compact
 // ---------------------------------------------------------------------------
 
-/// Registers one accepted `context.reload_styles` in the store's
+/// Registers one accepted `context.*` operation in the store's
 /// `idempotency_records` so `requests.lookup` can resolve it (mirrors
 /// `configuration_store.rs::record_acceptance`).
-fn record_reload_styles_idempotency(
+fn record_context_operation_idempotency(
     store: &crate::public_v1::store::V1Store,
     key: &str,
+    method_id: &str,
     digest: &str,
     operation_id: &str,
     receipt: &Value,
@@ -1432,13 +1917,21 @@ fn record_reload_styles_idempotency(
         Err(_) => now.clone(),
     };
     let resource = json!({"kind": "operation", "operationId": operation_id});
-    let conn = store.conn.lock().expect("sqlite mutex");
-    conn.execute(
+    let mut conn = store
+        .conn
+        .lock()
+        .map_err(|_| context_unavailable("sqlite mutex poisoned"))?;
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(context_sql_err)?;
+    tx.execute(
         "INSERT INTO idempotency_records (idempotency_key, method_id, input_digest,
             request_state, reason, resource_json, receipt_json, rejection_code, observed_at, retained_until, retry_disposition)
-         VALUES (?1, 'context.reload_styles', ?2, 'accepted', 'receiptFound', ?3, ?4, NULL, ?5, ?6, 'doNotReplay')",
+         VALUES (?1, ?2, ?3, 'accepted', 'receiptFound', ?4, ?5, NULL, ?6, ?7, 'doNotReplay')
+         ON CONFLICT(idempotency_key, method_id) DO NOTHING",
         params![
             key,
+            method_id,
             digest,
             serde_json::to_string(&resource).unwrap_or_else(|_| "null".into()),
             serde_json::to_string(receipt).unwrap_or_else(|_| "null".into()),
@@ -1447,6 +1940,7 @@ fn record_reload_styles_idempotency(
         ],
     )
     .map_err(context_sql_err)?;
+    tx.commit().map_err(context_sql_err)?;
     Ok(())
 }
 
@@ -1500,6 +1994,23 @@ fn record_compaction(
     Ok(())
 }
 
+enum CompactPhase {
+    Replayed(Value),
+    Completed {
+        receipt: Value,
+        succeeded: bool,
+    },
+    NeedsModel {
+        db: Arc<DomainDb>,
+        operation_id: String,
+        compaction_id: String,
+        session_id: String,
+        before_revision: String,
+        entry_count: i64,
+        receipt: Value,
+    },
+}
+
 async fn context_compact(
     rt: Arc<PublicV1Runtime>,
     input: Value,
@@ -1511,165 +2022,259 @@ async fn context_compact(
         .filter(|value| !value.is_empty())
         .ok_or_else(|| context_invalid_argument("`sessionId` is required"))?
         .to_owned();
-    // No NOT_FOUND in compact's error list: a missing session is malformed
-    // input for this write.
-    let session = rt
-        .store()
-        .get_session(&session_id)
-        .map_err(|_| context_invalid_argument(format!("session `{session_id}` does not exist")))?;
-    // `get_session` wraps the row: {"session": {...}, "snapshotCursor"}.
-    let Some(project_id) = session["session"].get("projectId").and_then(Value::as_str) else {
-        return Err(
-            context_invalid_argument(format!("session `{session_id}` has no project")).into(),
-        );
-    };
-    let scope = ContextScope::Session {
-        project_id: project_id.to_owned(),
-        session_id: session_id.clone(),
-    };
-    let expected = input
-        .get("expectedRevision")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_owned();
+    let rt_cloned = Arc::clone(&rt);
+    let session_id_phase1 = session_id.clone();
 
-    let db = context_domain_db(&rt)?;
-    let store = rt.store();
-    let scope_for_validation = scope.clone();
-    let store_for_validation = store.clone();
-    let session_for_validation = session_id.clone();
-    let validation = move || {
-        let conn = store_for_validation.conn.lock().expect("sqlite mutex");
-        let view = resolve_settings(
-            &conn,
-            &store_for_validation.meta().initialization_revision,
-            &scope_for_validation,
-        )?;
-        if view.revision != expected {
-            return Err(context_revision_conflict(&expected, &view.revision));
-        }
-        // 「活动run拒绝SESSION_BUSY」: compaction only happens at a safe
-        // session boundary — an idle session.
-        if session_has_active_or_queued_runs(&conn, &session_for_validation)? {
-            return Err(context_session_busy(&session_for_validation));
-        }
-        Ok(())
-    };
-    let operation = accept_domain_operation(
-        &db,
-        "context.compact",
-        &input,
-        idempotency_key.as_deref(),
-        || format!("op-{}", rt.store().next_id()),
-        validation,
-    )?;
-    let operation_id = operation.operation_id.clone();
-    let _ = mark_domain_operation_running(&db, &operation_id, &session_id);
-
-    // Inline execution (the `commands.rs::commands_execute` pattern): the
-    // receipt is already durable; the fold runs now and terminalizes the
-    // operation. A dropped connection neither cancels nor re-executes it.
-    let compaction_id = format!("cmp-{}", rt.store().next_id());
-    let (state, completion) = {
-        let baseline = {
-            let conn = store.conn.lock().expect("sqlite mutex");
-            match (
-                resolve_settings(&conn, &store.meta().initialization_revision, &scope),
-                history_entry_count(&conn, &session_id),
-            ) {
-                (Ok(view), Ok(count)) => Ok((view.revision, count)),
-                (Err(error), _) | (_, Err(error)) => Err(error),
-            }
+    let stage = tokio::task::spawn_blocking(move || -> Result<CompactPhase, ContractError> {
+        let store = rt_cloned.store();
+        // No NOT_FOUND in compact's error list: a missing session is malformed
+        // input for this write.
+        let session = store.get_session(&session_id_phase1).map_err(|_| {
+            context_invalid_argument(format!("session `{session_id_phase1}` does not exist"))
+        })?;
+        // `get_session` wraps the row: {"session": {...}, "snapshotCursor"}.
+        let Some(project_id) = session["session"].get("projectId").and_then(Value::as_str) else {
+            return Err(context_invalid_argument(format!(
+                "session `{session_id_phase1}` has no project"
+            )));
         };
-        match baseline {
-            Err(error) => (
-                "failed".to_owned(),
-                json!({"code": error.code, "message": error.message}),
-            ),
-            Ok((before_revision, 0)) => {
-                // Nothing to fold: an explicit no-op success. before ==
-                // after; the compaction state stays "none".
-                let recorded = {
-                    let conn = store.conn.lock().expect("sqlite mutex");
-                    record_compaction(
-                        &conn,
-                        &compaction_id,
-                        &session_id,
-                        &operation_id,
-                        "succeeded",
-                        0,
-                        &before_revision,
-                        Some(&before_revision),
-                    )
-                };
-                match recorded {
-                    Ok(()) => (
-                        "succeeded".to_owned(),
-                        json!({
-                            "beforeRevision": before_revision,
-                            "afterRevision": before_revision,
-                            "budget": json!({
-                                "status": "estimated",
-                                "value": 0,
-                                "unit": "tokens",
-                                "source": "history_entries",
-                            }),
-                        }),
-                    ),
-                    Err(error) => (
-                        "failed".to_owned(),
-                        json!({"code": error.code, "message": error.message}),
-                    ),
-                }
+        let scope = ContextScope::Session {
+            project_id: project_id.to_owned(),
+            session_id: session_id_phase1.clone(),
+        };
+        let expected = input
+            .get("expectedRevision")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
+
+        let db = context_domain_db(&rt_cloned)?;
+        let scope_for_validation = scope.clone();
+        let store_for_validation = store.clone();
+        let session_for_validation = session_id_phase1.clone();
+        let expected_for_validation = expected.clone();
+        let validation = move || {
+            let conn = store_for_validation
+                .conn
+                .lock()
+                .map_err(|_| context_unavailable("sqlite mutex poisoned"))?;
+            let view = resolve_settings(
+                &conn,
+                &store_for_validation.meta().initialization_revision,
+                &scope_for_validation,
+            )?;
+            if view.revision != expected_for_validation {
+                return Err(context_revision_conflict(
+                    &expected_for_validation,
+                    &view.revision,
+                ));
             }
-            Ok((before_revision, entry_count)) => {
-                // The fold needs the model seam. Until it lands the
-                // operation fails explicitly; nothing is written to the
-                // history, so the original entries — tool call/result
-                // pairing included — are untouched (「失败原历史工具配对
-                // 保持」).
-                let outcome = invoke_compaction_model(&session_id, entry_count).await;
-                let error = match outcome {
-                    Err(error) => error,
-                    // The seam's fold lands with the runtime task; this
-                    // build has no successful path behind the seam.
-                    Ok(()) => {
-                        unreachable!("invoke_compaction_model has no successful path in this build")
-                    }
-                };
-                let recorded = {
-                    let conn = store.conn.lock().expect("sqlite mutex");
+            // 「活动run拒绝SESSION_BUSY」: compaction only happens at a safe
+            // session boundary — an idle session.
+            if session_has_active_or_queued_runs(&conn, &session_for_validation)? {
+                return Err(context_session_busy(&session_for_validation));
+            }
+            Ok(())
+        };
+        let operation = accept_domain_operation(
+            &db,
+            "context.compact",
+            &input,
+            idempotency_key.as_deref(),
+            || format!("op-{}", rt_cloned.store().next_id()),
+            validation,
+        )?;
+        // Deduplicated replays must immediately return the durable receipt
+        // without resetting operation state or appending duplicate compaction rows
+        // or lifecycle events.
+        if operation.receipt.get("deduplicated") == Some(&json!(true)) {
+            return Ok(CompactPhase::Replayed(operation.receipt));
+        }
+
+        let operation_id = operation.operation_id.clone();
+        if let Some(key) = idempotency_key.as_deref() {
+            record_context_operation_idempotency(
+                store,
+                key,
+                "context.compact",
+                &compute_input_digest("context.compact", &input),
+                &operation_id,
+                &operation.receipt,
+            )?;
+        }
+        let _ = mark_domain_operation_running(&db, &operation_id, &session_id_phase1);
+
+        let compaction_id = format!("cmp-{}", rt_cloned.store().next_id());
+        let check_result: Result<(String, i64), ContractError> = (|| {
+            let mut conn = store
+                .conn
+                .lock()
+                .map_err(|_| context_unavailable("sqlite mutex poisoned"))?;
+            let tx = conn
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(context_sql_err)?;
+            let view = resolve_settings(&tx, &store.meta().initialization_revision, &scope)?;
+            if view.revision != expected {
+                return Err(context_revision_conflict(&expected, &view.revision));
+            }
+            if session_has_active_or_queued_runs(&tx, &session_id_phase1)? {
+                return Err(context_session_busy(&session_id_phase1));
+            }
+            let entry_count = history_entry_count(&tx, &session_id_phase1)?;
+            if entry_count == 0 {
+                // Nothing to fold: an explicit no-op success. before == after;
+                // the compaction state stays "none".
+                record_compaction(
+                    &tx,
+                    &compaction_id,
+                    &session_id_phase1,
+                    &operation_id,
+                    "succeeded",
+                    0,
+                    &view.revision,
+                    Some(&view.revision),
+                )?;
+                tx.commit().map_err(context_sql_err)?;
+                return Ok((view.revision, 0));
+            }
+            Ok((view.revision, entry_count))
+        })();
+
+        match check_result {
+            Err(error) => {
+                let completion = json!({"code": error.code, "message": error.message});
+                let _ = finish_domain_operation(
+                    &db,
+                    &operation_id,
+                    &session_id_phase1,
+                    "failed",
+                    &completion,
+                );
+                Ok(CompactPhase::Completed {
+                    receipt: operation.receipt,
+                    succeeded: false,
+                })
+            }
+            Ok((before_revision, 0)) => {
+                let completion = json!({
+                    "beforeRevision": before_revision,
+                    "afterRevision": before_revision,
+                    "budget": json!({
+                        "status": "estimated",
+                        "value": 0,
+                        "unit": "tokens",
+                        "source": "history_entries",
+                    }),
+                });
+                let _ = finish_domain_operation(
+                    &db,
+                    &operation_id,
+                    &session_id_phase1,
+                    "succeeded",
+                    &completion,
+                );
+                Ok(CompactPhase::Completed {
+                    receipt: operation.receipt,
+                    succeeded: true,
+                })
+            }
+            Ok((before_revision, entry_count)) => Ok(CompactPhase::NeedsModel {
+                db,
+                operation_id,
+                compaction_id,
+                session_id: session_id_phase1,
+                before_revision,
+                entry_count,
+                receipt: operation.receipt,
+            }),
+        }
+    })
+    .await
+    .map_err(|err| {
+        DispatchError::from(context_unavailable(format!(
+            "blocking context compact failed: {err}"
+        )))
+    })??;
+
+    match stage {
+        CompactPhase::Replayed(receipt) => Ok((ResponseOutcome::Accepted, receipt)),
+        CompactPhase::Completed { receipt, succeeded } => {
+            if succeeded {
+                rt.store().event_notifier().notify_waiters();
+                rt.store().state_notifier().notify_waiters();
+            }
+            Ok((ResponseOutcome::Accepted, receipt))
+        }
+        CompactPhase::NeedsModel {
+            db,
+            operation_id,
+            compaction_id,
+            session_id: compact_session_id,
+            before_revision,
+            entry_count,
+            receipt,
+        } => {
+            // The fold needs the model seam. Until it lands the operation
+            // fails explicitly; nothing is written to the history, so the
+            // original entries — tool call/result pairing included — stay untouched.
+            let outcome = invoke_compaction_model(&compact_session_id, entry_count).await;
+            let error = match outcome {
+                Err(error) => error,
+                Ok(()) => ContractError::new(
+                    CODE_CAPABILITY_UNAVAILABLE,
+                    "compaction summary model invocation is not available in this build".to_owned(),
+                    RetrySpec::never(),
+                    EffectStatus::NotApplied,
+                ),
+            };
+            let rt_finish = Arc::clone(&rt);
+            tokio::task::spawn_blocking(move || -> Result<(), ContractError> {
+                let recorded = (|| -> Result<(), ContractError> {
+                    let mut conn = rt_finish
+                        .store()
+                        .conn
+                        .lock()
+                        .map_err(|_| context_unavailable("sqlite mutex poisoned"))?;
+                    let tx = conn
+                        .transaction_with_behavior(TransactionBehavior::Immediate)
+                        .map_err(context_sql_err)?;
                     record_compaction(
-                        &conn,
+                        &tx,
                         &compaction_id,
-                        &session_id,
+                        &compact_session_id,
                         &operation_id,
                         "failed",
                         0,
                         &before_revision,
                         None,
-                    )
+                    )?;
+                    tx.commit().map_err(context_sql_err)?;
+                    Ok(())
+                })();
+                let completion = match recorded {
+                    Err(record_error) => {
+                        json!({"code": record_error.code, "message": record_error.message})
+                    }
+                    Ok(()) => json!({"code": error.code, "message": error.message}),
                 };
-                if let Err(record_error) = recorded {
-                    (
-                        "failed".to_owned(),
-                        json!({"code": record_error.code, "message": record_error.message}),
-                    )
-                } else {
-                    (
-                        "failed".to_owned(),
-                        json!({"code": error.code, "message": error.message}),
-                    )
-                }
-            }
+                let _ = finish_domain_operation(
+                    &db,
+                    &operation_id,
+                    &compact_session_id,
+                    "failed",
+                    &completion,
+                );
+                Ok(())
+            })
+            .await
+            .map_err(|err| {
+                DispatchError::from(context_unavailable(format!(
+                    "blocking context compact finish failed: {err}"
+                )))
+            })??;
+            Ok((ResponseOutcome::Accepted, receipt))
         }
-    };
-    if state == "succeeded" {
-        store.event_notifier().notify_waiters();
-        store.state_notifier().notify_waiters();
     }
-    let _ = finish_domain_operation(&db, &operation_id, &session_id, &state, &completion);
-    Ok((ResponseOutcome::Accepted, operation.receipt))
 }
 
 // ---------------------------------------------------------------------------
@@ -2959,5 +3564,241 @@ mod tests {
         assert_eq!(inspect["compactionState"], json!("failed"));
         assert_eq!(*source_value(&inspect, "historyEntryCount"), json!(3));
         assert_eq!(inspect["revision"], json!(init_rev));
+    }
+
+    #[tokio::test]
+    async fn compact_replay_is_idempotent_without_duplicate_rows_and_registers_lookup() {
+        let (tmp, rt, iid, init_rev) = fresh_home("ctx-compact-idem");
+        let (_ws, _project_id, session_id) = seed_project_session(&rt, &tmp.0, "proj-cmpt-idem");
+
+        let receipt = dispatch_accepted(
+            &rt,
+            "context.compact",
+            json!({
+                "instanceId": iid,
+                "sessionId": session_id,
+                "expectedRevision": init_rev,
+            }),
+            "key-compact-idem",
+        )
+        .await;
+        let op_id = receipt["operationId"].as_str().unwrap().to_owned();
+        let operation = wait_operation(&rt, &op_id).await;
+        assert_eq!(operation["state"], json!("succeeded"));
+
+        let (compaction_count_before, event_count_before) = {
+            let conn = rt.store().conn.lock().expect("sqlite mutex");
+            let c: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM v1_context_compactions WHERE session_id = ?1",
+                    params![session_id],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            let e: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM events WHERE resource_id = ?1",
+                    params![op_id],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            (c, e)
+        };
+        assert_eq!(compaction_count_before, 1);
+
+        let replay = dispatch_accepted(
+            &rt,
+            "context.compact",
+            json!({
+                "instanceId": iid,
+                "sessionId": session_id,
+                "expectedRevision": init_rev,
+            }),
+            "key-compact-idem",
+        )
+        .await;
+        assert_eq!(replay["deduplicated"], json!(true));
+        assert_eq!(replay["operationId"], json!(op_id));
+
+        let (compaction_count_after, event_count_after) = {
+            let conn = rt.store().conn.lock().expect("sqlite mutex");
+            let c: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM v1_context_compactions WHERE session_id = ?1",
+                    params![session_id],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            let e: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM events WHERE resource_id = ?1",
+                    params![op_id],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            (c, e)
+        };
+        assert_eq!(compaction_count_after, compaction_count_before);
+        assert_eq!(event_count_after, event_count_before);
+
+        let lookup = dispatch_ok(
+            &rt,
+            "requests.lookup",
+            json!({
+                "methodId": "context.compact",
+                "idempotencyKey": "key-compact-idem",
+            }),
+        )
+        .await;
+        assert_eq!(lookup["requestState"], json!("accepted"));
+        assert_eq!(
+            lookup["resource"],
+            json!({"kind": "operation", "operationId": op_id})
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn styles_rejects_workspace_symlink_escape_and_skips_oversized_entries() {
+        let (tmp, rt, iid, init_rev) = fresh_home("ctx-styles-sec");
+        let (workspace, project_id, session_id) = seed_project_session(&rt, &tmp.0, "proj-sec");
+        let outside_dir = tmp.0.join("outside-styles");
+        std::fs::create_dir_all(&outside_dir).unwrap();
+        write_style(&outside_dir, "secret", "stolen secret style");
+
+        let pilotdeck_dir = workspace.join(".pilotdeck");
+        std::fs::create_dir_all(&pilotdeck_dir).unwrap();
+        let ws_styles = pilotdeck_dir.join("styles");
+        std::os::unix::fs::symlink(&outside_dir, &ws_styles).unwrap();
+
+        let code = dispatch_err(
+            &rt,
+            "context.styles",
+            json!({
+                "instanceId": iid,
+                "scope": {"kind": "session", "projectId": project_id, "sessionId": session_id},
+            }),
+        )
+        .await;
+        assert_eq!(code, "PATH_ESCAPE");
+
+        // Replace symlinked directory with a real directory, then test child
+        // symlink and oversized (>256 KiB) file handling via diagnostics.
+        std::fs::remove_file(&ws_styles).unwrap();
+        std::fs::create_dir_all(&ws_styles).unwrap();
+        write_style(&ws_styles, "valid", "valid prompt body");
+        std::os::unix::fs::symlink(
+            outside_dir.join("secret.md"),
+            ws_styles.join("escape-leaf.md"),
+        )
+        .unwrap();
+        let oversized = "x".repeat(MAX_STYLE_FILE_BYTES + 128);
+        write_style(&ws_styles, "huge", &oversized);
+
+        let listed = dispatch_ok(
+            &rt,
+            "context.styles",
+            json!({
+                "instanceId": iid,
+                "scope": {"kind": "session", "projectId": project_id, "sessionId": session_id},
+            }),
+        )
+        .await;
+        let ids: Vec<String> = listed["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| item["styleId"].as_str().unwrap().to_owned())
+            .collect();
+        assert_eq!(ids, vec!["project:valid".to_owned()]);
+
+        let receipt = dispatch_accepted(
+            &rt,
+            "context.reload_styles",
+            json!({
+                "instanceId": iid,
+                "scope": {"kind": "session", "projectId": project_id, "sessionId": session_id},
+                "expectedRevision": init_rev,
+            }),
+            "key-reload-sec",
+        )
+        .await;
+        let op = wait_operation(&rt, receipt["operationId"].as_str().unwrap()).await;
+        assert_eq!(op["state"], json!("succeeded"));
+        let diag_codes: Vec<&str> = op["result"]["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|d| d["code"].as_str())
+            .collect();
+        assert!(diag_codes.contains(&"STYLE_SYMLINK_SKIPPED"));
+        assert!(diag_codes.contains(&"STYLE_TOO_LARGE"));
+    }
+
+    #[tokio::test]
+    async fn inspect_accounts_for_multimedia_attachments_and_applied_config_generation() {
+        let (tmp, rt, iid, init_rev) = fresh_home("ctx-budget-gen");
+        let (_ws, _project_id, session_id) = seed_project_session(&rt, &tmp.0, "proj-bgen");
+        rt.store()
+            .append_history_entries(
+                &session_id,
+                &[json!({
+                    "turnId": "t1",
+                    "role": "user",
+                    "content": [{"kind": "attachment", "artifactId": "art-img-1"}]
+                })],
+            )
+            .unwrap();
+
+        let cfg_before = dispatch_ok(
+            &rt,
+            "configuration.resolve",
+            json!({"instanceId": iid, "scope": {"kind": "instance"}}),
+        )
+        .await;
+        let cfg_rev = cfg_before["storedRevision"].as_str().unwrap().to_owned();
+        let cfg_updated = dispatch_ok(
+            &rt,
+            "configuration.update",
+            json!({
+                "instanceId": iid,
+                "scope": {"kind": "instance"},
+                "expectedStoredRevision": cfg_rev,
+                "changes": [{"key": "ui.theme", "action": "set", "value": "dark"}],
+            }),
+        )
+        .await;
+        let applied_gen = cfg_updated["effectiveGeneration"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+
+        let inspect = dispatch_ok(
+            &rt,
+            "context.inspect",
+            json!({"instanceId": iid, "sessionId": session_id}),
+        )
+        .await;
+        assert_eq!(inspect["budget"]["status"], json!("estimated"));
+        let tokens = inspect["budget"]["value"].as_u64().unwrap() as usize;
+        assert!(
+            tokens
+                >= crate::model_cost::MULTIMEDIA_TOKENS + crate::model_cost::PER_MESSAGE_OVERHEAD,
+            "attachment + message overhead must be counted in budget (got {tokens})"
+        );
+        assert_eq!(inspect["effectiveGeneration"], json!(applied_gen));
+
+        let configured = dispatch_ok(
+            &rt,
+            "context.configure",
+            json!({
+                "instanceId": iid,
+                "sessionId": session_id,
+                "expectedRevision": init_rev,
+                "thinking": "off",
+            }),
+        )
+        .await;
+        assert_eq!(configured["effectiveGeneration"], json!(applied_gen));
     }
 }

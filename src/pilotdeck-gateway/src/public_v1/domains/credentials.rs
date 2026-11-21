@@ -37,11 +37,12 @@ use agentcpm_pd_protocol::errors::{
     EffectStatus, RetrySpec,
 };
 use chrono::Utc;
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::public_v1::domains::DomainRegistry;
+use crate::public_v1::domains::configuration::enforce_v1_sqlite_permissions;
 use crate::public_v1::runtime::{DispatchError, PublicV1Runtime};
 use crate::public_v1::store::V1Store;
 
@@ -222,69 +223,201 @@ fn credentials_read_current_rev(conn: &Connection) -> Result<String, ContractErr
 // Operation handlers
 // ---------------------------------------------------------------------------
 
+fn credentials_mutex_err() -> ContractError {
+    ContractError::new(
+        CODE_UNAVAILABLE,
+        "sqlite store mutex poisoned",
+        RetrySpec::backoff_read(Some(250)),
+        EffectStatus::Unknown,
+    )
+}
+
+fn json_references_credential(root: &Value, credential_id: &str) -> bool {
+    let mut stack = vec![root];
+    while let Some(node) = stack.pop() {
+        match node {
+            Value::Object(map) => {
+                if map
+                    .get("credentialRef")
+                    .and_then(Value::as_str)
+                    .is_some_and(|s| s == credential_id)
+                {
+                    return true;
+                }
+                for val in map.values() {
+                    if matches!(val, Value::Object(_) | Value::Array(_)) {
+                        stack.push(val);
+                    }
+                }
+            }
+            Value::Array(arr) => {
+                for val in arr {
+                    if matches!(val, Value::Object(_) | Value::Array(_)) {
+                        stack.push(val);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+fn find_credential_reference_in_tx(
+    tx: &Connection,
+    credential_id: &str,
+) -> Result<Option<String>, ContractError> {
+    if let Some(provider_id) = tx
+        .query_row(
+            "SELECT provider_id FROM v1_providers WHERE credential_ref = ?1 LIMIT 1",
+            params![credential_id],
+            |r| r.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(credentials_sql_err)?
+    {
+        return Ok(Some(format!("provider `{provider_id}`")));
+    }
+    if let Some(server_id) = tx
+        .query_row(
+            "SELECT server_id FROM v1_mcp_servers WHERE credential_ref = ?1 LIMIT 1",
+            params![credential_id],
+            |r| r.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(credentials_sql_err)?
+    {
+        return Ok(Some(format!("MCP server `{server_id}`")));
+    }
+    {
+        let mut stmt = tx
+            .prepare("SELECT channel_id, configuration_json FROM v1_channels")
+            .map_err(credentials_sql_err)?;
+        let rows = stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+            .map_err(credentials_sql_err)?;
+        for row in rows {
+            let (channel_id, cfg_json) = row.map_err(credentials_sql_err)?;
+            if let Ok(cfg) = serde_json::from_str::<Value>(&cfg_json)
+                && json_references_credential(&cfg, credential_id)
+            {
+                return Ok(Some(format!("channel `{channel_id}`")));
+            }
+        }
+    }
+    if let Some(challenge_id) = tx
+        .query_row(
+            "SELECT challenge_id FROM v1_channel_challenges
+             WHERE credential_ref = ?1
+               AND state NOT IN ('succeeded', 'failed', 'cancelled', 'expired')
+             LIMIT 1",
+            params![credential_id],
+            |r| r.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(credentials_sql_err)?
+    {
+        return Ok(Some(format!("channel challenge `{challenge_id}`")));
+    }
+    if let Some(test_id) = tx
+        .query_row(
+            "SELECT test_id FROM v1_provider_tests
+             WHERE credential_ref = ?1
+               AND state NOT IN ('succeeded', 'failed', 'cancelled', 'interrupted')
+             LIMIT 1",
+            params![credential_id],
+            |r| r.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(credentials_sql_err)?
+    {
+        return Ok(Some(format!("in-flight provider test `{test_id}`")));
+    }
+    Ok(None)
+}
+
+async fn run_blocking<F>(rt: &Arc<PublicV1Runtime>, f: F) -> Result<Value, DispatchError>
+where
+    F: FnOnce(&V1Store) -> Result<Value, ContractError> + Send + 'static,
+{
+    let store = Arc::clone(rt.store());
+    let res = tokio::task::spawn_blocking(move || f(&store))
+        .await
+        .map_err(|e| {
+            DispatchError::from(ContractError::new(
+                CODE_UNAVAILABLE,
+                format!("blocking credential task failed: {e}"),
+                RetrySpec::backoff_read(Some(250)),
+                EffectStatus::Unknown,
+            ))
+        })?;
+    res.map_err(DispatchError::from)
+}
+
 async fn credential_list(
     rt: Arc<PublicV1Runtime>,
     input: Value,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
-    let kind_filter = input.get("kind").and_then(Value::as_str);
-    let page = input.get("page").and_then(Value::as_object);
-    let limit = page
-        .and_then(|p| p.get("limit"))
-        .and_then(Value::as_u64)
-        .unwrap_or(100)
-        .clamp(1, 500) as usize;
-    let offset = match page.and_then(|p| p.get("cursor")).and_then(Value::as_str) {
-        Some(cursor) => cursor.parse::<usize>().map_err(|_| {
-            credentials_invalid_argument(format!("invalid pagination cursor `{cursor}`"))
-        })?,
-        None => 0,
-    };
+    let body = run_blocking(&rt, move |store| {
+        let kind_filter = input.get("kind").and_then(Value::as_str).map(str::to_owned);
+        let page = input.get("page").and_then(Value::as_object);
+        let limit = page
+            .and_then(|p| p.get("limit"))
+            .and_then(Value::as_u64)
+            .unwrap_or(100)
+            .clamp(1, 500) as usize;
+        let offset = match page.and_then(|p| p.get("cursor")).and_then(Value::as_str) {
+            Some(cursor) => cursor.parse::<usize>().map_err(|_| {
+                credentials_invalid_argument(format!("invalid pagination cursor `{cursor}`"))
+            })?,
+            None => 0,
+        };
 
-    let conn = rt.store().conn.lock().expect("sqlite mutex");
-    let snapshot_revision = credentials_read_current_rev(&conn)?;
-    let mut stmt = conn
-        .prepare(&format!(
-            "SELECT {CREDENTIAL_COLUMNS} FROM v1_credentials
-             ORDER BY created_at DESC, credential_id ASC"
-        ))
-        .map_err(credentials_sql_err)?;
-    let mut credentials = stmt
-        .query_map([], row_to_credential)
-        .map_err(credentials_sql_err)?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(credentials_sql_err)?;
-    drop(stmt);
-    drop(conn);
-    // 「类型过滤准确」: exact kind match.
-    if let Some(kind) = kind_filter {
-        credentials.retain(|c| c.kind == kind);
-    }
+        let conn = store.conn.lock().map_err(|_| credentials_mutex_err())?;
+        let snapshot_revision = credentials_read_current_rev(&conn)?;
+        let mut stmt = conn
+            .prepare(&format!(
+                "SELECT {CREDENTIAL_COLUMNS} FROM v1_credentials
+                 ORDER BY created_at DESC, credential_id ASC"
+            ))
+            .map_err(credentials_sql_err)?;
+        let mut credentials = stmt
+            .query_map([], row_to_credential)
+            .map_err(credentials_sql_err)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(credentials_sql_err)?;
+        drop(stmt);
+        drop(conn);
+        // 「类型过滤准确」: exact kind match.
+        if let Some(kind) = kind_filter.as_deref() {
+            credentials.retain(|c| c.kind == kind);
+        }
 
-    let total = credentials.len();
-    if offset > total {
-        return Err(
-            credentials_invalid_argument("pagination cursor beyond end of collection").into(),
-        );
-    }
-    let end = offset.saturating_add(limit).min(total);
-    let complete = end >= total;
-    let items: Vec<Value> = credentials
-        .into_iter()
-        .skip(offset)
-        .take(limit)
-        .map(|c| c.to_contract_json())
-        .collect();
-    Ok((
-        ResponseOutcome::Succeeded,
-        json!({
+        let total = credentials.len();
+        if offset > total {
+            return Err(credentials_invalid_argument(
+                "pagination cursor beyond end of collection",
+            ));
+        }
+        let end = offset.saturating_add(limit).min(total);
+        let complete = end >= total;
+        let items: Vec<Value> = credentials
+            .into_iter()
+            .skip(offset)
+            .take(limit)
+            .map(|c| c.to_contract_json())
+            .collect();
+        Ok(json!({
             "items": items,
             "pageInfo": {
                 "snapshotRevision": snapshot_revision,
                 "nextCursor": if complete { Value::Null } else { json!(end.to_string()) },
                 "complete": complete,
             },
-        }),
-    ))
+        }))
+    })
+    .await?;
+    Ok((ResponseOutcome::Succeeded, body))
 }
 
 async fn credential_write(
@@ -292,139 +425,138 @@ async fn credential_write(
     input: Value,
     expected_revision: Option<String>,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
-    let credential_id = input
-        .get("credentialId")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_owned();
-    if credential_id.is_empty() {
-        return Err(credentials_invalid_argument("credentialId is required").into());
-    }
-    let kind = input
-        .get("kind")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .trim()
-        .to_owned();
-    if kind.is_empty() {
-        return Err(credentials_invalid_argument(
-            "credential kind is required and must not be blank",
-        )
-        .into());
-    }
-    let name = input
-        .get("name")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .trim()
-        .to_owned();
-    if name.is_empty() {
-        return Err(credentials_invalid_argument(
-            "credential name is required and must not be blank",
-        )
-        .into());
-    }
-    let secret = input
-        .get("secret")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    if secret.trim().is_empty() {
-        return Err(credentials_invalid_argument(
-            "credential secret is required and must not be blank",
-        )
-        .into());
-    }
-    let enabled = input
-        .get("enabled")
-        .and_then(Value::as_bool)
-        .unwrap_or(true);
-
-    let expected = expected_revision
-        .as_deref()
-        .or_else(|| input.get("expectedRevision").and_then(Value::as_str));
-
-    let store = rt.store();
-    let mut conn = store.conn.lock().expect("sqlite mutex");
-    let tx = conn.transaction().map_err(credentials_sql_err)?;
-
-    let existing = load_credential(&tx, &credential_id)?;
-    match (expected, &existing) {
-        // Create: omitted revision is only usable when absent (same rule as
-        // model.write / provider.write —「创建省revision仅不存在可用」).
-        (None, Some(current)) => {
-            return Err(credentials_revision_conflict("<omitted>", &current.revision).into());
+    let body = run_blocking(&rt, move |store| {
+        let credential_id = input
+            .get("credentialId")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        if credential_id.is_empty() {
+            return Err(credentials_invalid_argument("credentialId is required"));
         }
-        (Some(_), None) => {
-            return Err(
-                credentials_revision_conflict(expected.unwrap_or_default(), "<absent>").into(),
-            );
+        let kind = input
+            .get("kind")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .trim()
+            .to_owned();
+        if kind.is_empty() {
+            return Err(credentials_invalid_argument(
+                "credential kind is required and must not be blank",
+            ));
         }
-        (Some(expected), Some(current)) if current.revision != expected => {
-            return Err(credentials_revision_conflict(expected, &current.revision).into());
+        let name = input
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .trim()
+            .to_owned();
+        if name.is_empty() {
+            return Err(credentials_invalid_argument(
+                "credential name is required and must not be blank",
+            ));
         }
-        _ => {}
-    }
+        let secret = input
+            .get("secret")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if secret.trim().is_empty() {
+            return Err(credentials_invalid_argument(
+                "credential secret is required and must not be blank",
+            ));
+        }
+        let enabled = input
+            .get("enabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(true);
 
-    // 「更新类型不匹配拒绝保留旧值」: replacing a credential with a
-    // different kind is refused; the old value (and kind) stay intact.
-    if let Some(current) = &existing
-        && current.kind != kind
-    {
-        return Err(ContractError::new(
-            CODE_CREDENTIAL_TYPE_MISMATCH,
-            format!(
-                "credential `{credential_id}` has kind `{}`; it cannot be replaced with kind `{kind}`",
-                current.kind
-            ),
-            RetrySpec::never(),
-            EffectStatus::NotApplied,
+        let expected = expected_revision
+            .as_deref()
+            .or_else(|| input.get("expectedRevision").and_then(Value::as_str));
+
+        let mut conn = store.conn.lock().map_err(|_| credentials_mutex_err())?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(credentials_sql_err)?;
+
+        let existing = load_credential(&tx, &credential_id)?;
+        match (expected, &existing) {
+            // Create: omitted revision is only usable when absent (same rule as
+            // model.write / provider.write —「创建省revision仅不存在可用」).
+            (None, Some(current)) => {
+                return Err(credentials_revision_conflict("<omitted>", &current.revision));
+            }
+            (Some(_), None) => {
+                return Err(credentials_revision_conflict(
+                    expected.unwrap_or_default(),
+                    "<absent>",
+                ));
+            }
+            (Some(expected), Some(current)) if current.revision != expected => {
+                return Err(credentials_revision_conflict(expected, &current.revision));
+            }
+            _ => {}
+        }
+
+        // 「更新类型不匹配拒绝保留旧值」: replacing a credential with a
+        // different kind is refused; the old value (and kind) stay intact.
+        if let Some(current) = &existing
+            && current.kind != kind
+        {
+            return Err(ContractError::new(
+                CODE_CREDENTIAL_TYPE_MISMATCH,
+                format!(
+                    "credential `{credential_id}` has kind `{}`; it cannot be replaced with kind `{kind}`",
+                    current.kind
+                ),
+                RetrySpec::never(),
+                EffectStatus::NotApplied,
+            ));
+        }
+
+        // The secret is stored verbatim (no trimming — silently rewriting a
+        // secret risks corrupting it; only a blank check runs).
+        let fingerprint = fingerprint_of(secret);
+        let new_rev = credentials_next_rev_in_tx(&tx)?;
+        let now = Utc::now().to_rfc3339();
+        tx.execute(
+            "INSERT INTO v1_credentials
+                 (credential_id, kind, name, secret, fingerprint, enabled, revision, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)
+             ON CONFLICT(credential_id) DO UPDATE SET
+                kind = excluded.kind,
+                name = excluded.name,
+                secret = excluded.secret,
+                fingerprint = excluded.fingerprint,
+                enabled = excluded.enabled,
+                revision = excluded.revision,
+                updated_at = excluded.updated_at",
+            params![
+                credential_id,
+                kind,
+                name,
+                secret,
+                fingerprint,
+                i64::from(enabled),
+                new_rev,
+                now,
+            ],
         )
-        .into());
-    }
+        .map_err(credentials_sql_err)?;
+        tx.commit().map_err(credentials_sql_err)?;
+        enforce_v1_sqlite_permissions(store.home())?;
 
-    // The secret is stored verbatim (no trimming — silently rewriting a
-    // secret risks corrupting it; only a blank check runs). The baseline
-    // trims; this deviation is registered in the task report.
-    let fingerprint = fingerprint_of(secret);
-    let new_rev = credentials_next_rev_in_tx(&tx)?;
-    let now = Utc::now().to_rfc3339();
-    tx.execute(
-        "INSERT INTO v1_credentials
-             (credential_id, kind, name, secret, fingerprint, enabled, revision, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)
-         ON CONFLICT(credential_id) DO UPDATE SET
-            kind = excluded.kind,
-            name = excluded.name,
-            secret = excluded.secret,
-            fingerprint = excluded.fingerprint,
-            enabled = excluded.enabled,
-            revision = excluded.revision,
-            updated_at = excluded.updated_at",
-        params![
-            credential_id,
-            kind,
-            name,
-            secret,
-            fingerprint,
-            i64::from(enabled),
-            new_rev,
-            now,
-        ],
-    )
-    .map_err(credentials_sql_err)?;
-    tx.commit().map_err(credentials_sql_err)?;
-
-    Ok((
-        ResponseOutcome::Succeeded,
-        json!({"credential": {
+        Ok(json!({"credential": {
             "credentialId": credential_id,
             "kind": kind,
             "name": name,
             "enabled": enabled,
             "revision": new_rev,
             "fingerprint": fingerprint,
-        }}),
-    ))
+        }}))
+    })
+    .await?;
+    Ok((ResponseOutcome::Succeeded, body))
 }
 
 async fn credential_set_enabled(
@@ -432,58 +564,58 @@ async fn credential_set_enabled(
     input: Value,
     expected_revision: Option<String>,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
-    let credential_id = input
-        .get("credentialId")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_owned();
-    let enabled = input
-        .get("enabled")
-        .and_then(Value::as_bool)
-        .ok_or_else(|| credentials_invalid_argument("`enabled` must be a boolean"))?;
-    let expected = expected_revision
-        .as_deref()
-        .or_else(|| input.get("expectedRevision").and_then(Value::as_str))
-        .unwrap_or_default()
-        .to_owned();
+    let body = run_blocking(&rt, move |store| {
+        let credential_id = input
+            .get("credentialId")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        let enabled = input
+            .get("enabled")
+            .and_then(Value::as_bool)
+            .ok_or_else(|| credentials_invalid_argument("`enabled` must be a boolean"))?;
+        let expected = expected_revision
+            .as_deref()
+            .or_else(|| input.get("expectedRevision").and_then(Value::as_str))
+            .unwrap_or_default()
+            .to_owned();
 
-    let store = rt.store();
-    let mut conn = store.conn.lock().expect("sqlite mutex");
-    let tx = conn.transaction().map_err(credentials_sql_err)?;
+        let mut conn = store.conn.lock().map_err(|_| credentials_mutex_err())?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(credentials_sql_err)?;
 
-    let Some(current) = load_credential(&tx, &credential_id)? else {
-        return Err(credential_not_found(&credential_id).into());
-    };
-    if current.revision != expected {
-        return Err(credentials_revision_conflict(&expected, &current.revision).into());
-    }
-    if current.enabled == enabled {
-        // No state change: confirmed current state, no revision bump (the
-        // access_keys precedent for same-value conditional writes).
+        let Some(current) = load_credential(&tx, &credential_id)? else {
+            return Err(credential_not_found(&credential_id));
+        };
+        if current.revision != expected {
+            return Err(credentials_revision_conflict(&expected, &current.revision));
+        }
+        if current.enabled == enabled {
+            // No state change: confirmed current state, no revision bump (the
+            // access_keys precedent for same-value conditional writes).
+            tx.commit().map_err(credentials_sql_err)?;
+            return Ok(json!({"credential": current.to_contract_json()}));
+        }
+
+        let new_rev = credentials_next_rev_in_tx(&tx)?;
+        let now = Utc::now().to_rfc3339();
+        tx.execute(
+            "UPDATE v1_credentials SET enabled = ?1, revision = ?2, updated_at = ?3
+             WHERE credential_id = ?4",
+            params![i64::from(enabled), new_rev, now, credential_id],
+        )
+        .map_err(credentials_sql_err)?;
         tx.commit().map_err(credentials_sql_err)?;
-        return Ok((
-            ResponseOutcome::Succeeded,
-            json!({"credential": current.to_contract_json()}),
-        ));
-    }
+        enforce_v1_sqlite_permissions(store.home())?;
 
-    let new_rev = credentials_next_rev_in_tx(&tx)?;
-    let now = Utc::now().to_rfc3339();
-    tx.execute(
-        "UPDATE v1_credentials SET enabled = ?1, revision = ?2, updated_at = ?3
-         WHERE credential_id = ?4",
-        params![i64::from(enabled), new_rev, now, credential_id],
-    )
-    .map_err(credentials_sql_err)?;
-    tx.commit().map_err(credentials_sql_err)?;
-
-    let mut updated = current;
-    updated.enabled = enabled;
-    updated.revision = new_rev;
-    Ok((
-        ResponseOutcome::Succeeded,
-        json!({"credential": updated.to_contract_json()}),
-    ))
+        let mut updated = current;
+        updated.enabled = enabled;
+        updated.revision = new_rev;
+        Ok(json!({"credential": updated.to_contract_json()}))
+    })
+    .await?;
+    Ok((ResponseOutcome::Succeeded, body))
 }
 
 async fn credential_remove(
@@ -491,64 +623,57 @@ async fn credential_remove(
     input: Value,
     expected_revision: Option<String>,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
-    let credential_id = input
-        .get("credentialId")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_owned();
-    let expected = expected_revision
-        .as_deref()
-        .or_else(|| input.get("expectedRevision").and_then(Value::as_str))
-        .unwrap_or_default()
-        .to_owned();
+    let body = run_blocking(&rt, move |store| {
+        let credential_id = input
+            .get("credentialId")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        let expected = expected_revision
+            .as_deref()
+            .or_else(|| input.get("expectedRevision").and_then(Value::as_str))
+            .unwrap_or_default()
+            .to_owned();
 
-    let store = rt.store();
-    let mut conn = store.conn.lock().expect("sqlite mutex");
-    let tx = conn.transaction().map_err(credentials_sql_err)?;
+        let mut conn = store.conn.lock().map_err(|_| credentials_mutex_err())?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(credentials_sql_err)?;
 
-    let Some(current) = load_credential(&tx, &credential_id)? else {
-        return Err(credential_not_found(&credential_id).into());
-    };
-    if current.revision != expected {
-        return Err(credentials_revision_conflict(&expected, &current.revision).into());
-    }
+        let Some(current) = load_credential(&tx, &credential_id)? else {
+            return Err(credential_not_found(&credential_id));
+        };
+        if current.revision != expected {
+            return Err(credentials_revision_conflict(&expected, &current.revision));
+        }
 
-    // 「仍有引用拒绝RESOURCE_IN_USE」: any provider referencing the
-    // credential blocks removal (same-connection transaction, so it is
-    // serialized against concurrent provider.write).
-    let referencing: Option<String> = tx
-        .query_row(
-            "SELECT provider_id FROM v1_providers WHERE credential_ref = ?1 LIMIT 1",
+        // 「仍有引用拒绝RESOURCE_IN_USE」: check all durable reference tables
+        // (providers, MCP servers, channels, non-terminal challenges & provider tests).
+        if let Some(referrer) = find_credential_reference_in_tx(&tx, &credential_id)? {
+            return Err(ContractError::new(
+                CODE_RESOURCE_IN_USE,
+                format!("credential `{credential_id}` is referenced by {referrer}"),
+                RetrySpec::never(),
+                EffectStatus::NotApplied,
+            ));
+        }
+
+        tx.execute(
+            "DELETE FROM v1_credentials WHERE credential_id = ?1",
             params![credential_id],
-            |r| r.get(0),
         )
-        .optional()
         .map_err(credentials_sql_err)?;
-    if let Some(provider_id) = referencing {
-        return Err(ContractError::new(
-            CODE_RESOURCE_IN_USE,
-            format!("credential `{credential_id}` is referenced by provider `{provider_id}`"),
-            RetrySpec::never(),
-            EffectStatus::NotApplied,
-        )
-        .into());
-    }
+        let new_rev = credentials_next_rev_in_tx(&tx)?;
+        tx.commit().map_err(credentials_sql_err)?;
+        enforce_v1_sqlite_permissions(store.home())?;
 
-    tx.execute(
-        "DELETE FROM v1_credentials WHERE credential_id = ?1",
-        params![credential_id],
-    )
-    .map_err(credentials_sql_err)?;
-    let new_rev = credentials_next_rev_in_tx(&tx)?;
-    tx.commit().map_err(credentials_sql_err)?;
-
-    Ok((
-        ResponseOutcome::Succeeded,
-        json!({
+        Ok(json!({
             "removedCredentialId": credential_id,
             "revision": new_rev,
-        }),
-    ))
+        }))
+    })
+    .await?;
+    Ok((ResponseOutcome::Succeeded, body))
 }
 
 // ---------------------------------------------------------------------------
@@ -557,23 +682,12 @@ async fn credential_remove(
 // ---------------------------------------------------------------------------
 
 impl V1Store {
-    /// Returns the stored secret for an **existing and enabled** credential,
-    /// or `None` for a missing, disabled, or deleted credential
-    /// (「禁用后新调用不使用secret」「删除后旧ID无法读取秘密」). Failures
-    /// answer `None` rather than erroring so callers treat them as
-    /// "no usable credential" — the same fail-closed shape
-    /// `access_keys.rs::authenticate_secret` uses.
-    ///
-    /// Unused in the S3 build outside tests: the consumers are the later
-    /// provider-test / model-invocation tasks, and no shared-path caller may
-    /// be wired before those seams are approved (the `access_keys.rs`
-    /// precedent for suppressing the warning deliberately).
     #[allow(dead_code)]
     pub(crate) fn resolve_credential_secret(
         &self,
         credential_id: &str,
     ) -> Result<Option<String>, ContractError> {
-        let conn = self.conn.lock().expect("sqlite mutex");
+        let conn = self.conn.lock().map_err(|_| credentials_mutex_err())?;
         let secret: Option<String> = conn
             .query_row(
                 "SELECT secret FROM v1_credentials WHERE credential_id = ?1 AND enabled = 1",
@@ -1263,5 +1377,175 @@ mod tests {
             event_text.is_none(),
             "the secret must never appear in the event log"
         );
+    }
+
+    #[tokio::test]
+    async fn remove_checks_mcp_channel_challenge_and_inflight_provider_test_references() {
+        let (_tmp, rt, iid) = fresh_home("cred-in-use-all");
+        let (_, written) = rt
+            .dispatch(
+                "credential.write",
+                json!({
+                    "instanceId": iid,
+                    "credentialId": "cred-ref-1",
+                    "kind": "api_key",
+                    "name": "ref-test",
+                    "secret": "sk-ref-secret",
+                }),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let rev = written["credential"]["revision"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+
+        let assert_in_use = |rt: Arc<PublicV1Runtime>, iid: String, rev: String| async move {
+            let err = application_error(
+                rt.dispatch(
+                    "credential.remove",
+                    json!({
+                        "instanceId": iid,
+                        "credentialId": "cred-ref-1",
+                        "expectedRevision": rev,
+                    }),
+                    None,
+                    None,
+                )
+                .await
+                .unwrap_err(),
+            );
+            assert_eq!(err.code, CODE_RESOURCE_IN_USE);
+        };
+
+        // 1. MCP server reference blocks removal.
+        {
+            let conn = rt.store().conn.lock().unwrap();
+            conn.execute(
+                "INSERT INTO v1_mcp_servers (server_id, scope_key, scope_kind, project_id, session_id, name, transport, config_json, credential_ref, enabled, generation, configuration_revision, created_at, updated_at)
+                 VALUES ('srv-1', 'global', 'global', NULL, NULL, 'srv', 'http', '{}', 'cred-ref-1', 1, 'gen-1', 'rev-1', '2026-11-20T00:00:00Z', '2026-11-20T00:00:00Z')",
+                [],
+            )
+            .unwrap();
+        }
+        assert_in_use(Arc::clone(&rt), iid.clone(), rev.clone()).await;
+        {
+            let conn = rt.store().conn.lock().unwrap();
+            conn.execute("DELETE FROM v1_mcp_servers WHERE server_id = 'srv-1'", [])
+                .unwrap();
+        }
+
+        // 2. Channel configuration_json credentialRef blocks removal.
+        {
+            let conn = rt.store().conn.lock().unwrap();
+            conn.execute(
+                "INSERT INTO v1_channels (channel_id, adapter_type, schema_id, scope_kind, scope_id, configuration_json, revision, enabled, state, reason_code, generation, created_at, updated_at)
+                 VALUES ('ch-1', 'feishu', 's-1', 'instance', '', '{\"credentialRef\":\"cred-ref-1\"}', 'rev-1', 1, 'enabled', NULL, 'gen-1', '2026-11-20T00:00:00Z', '2026-11-20T00:00:00Z')",
+                [],
+            )
+            .unwrap();
+        }
+        assert_in_use(Arc::clone(&rt), iid.clone(), rev.clone()).await;
+        {
+            let conn = rt.store().conn.lock().unwrap();
+            conn.execute("DELETE FROM v1_channels WHERE channel_id = 'ch-1'", [])
+                .unwrap();
+        }
+
+        // 3. Pending channel challenge blocks removal; terminal challenge allows removal.
+        {
+            let conn = rt.store().conn.lock().unwrap();
+            conn.execute(
+                "INSERT INTO v1_channel_challenges (challenge_id, channel_id, challenge_type, state, expires_at, credential_ref, created_at, updated_at)
+                 VALUES ('chl-1', 'ch-1', 'oauth', 'pending', '2099-01-01T00:00:00Z', 'cred-ref-1', '2026-11-20T00:00:00Z', '2026-11-20T00:00:00Z')",
+                [],
+            )
+            .unwrap();
+        }
+        assert_in_use(Arc::clone(&rt), iid.clone(), rev.clone()).await;
+        {
+            let conn = rt.store().conn.lock().unwrap();
+            conn.execute(
+                "UPDATE v1_channel_challenges SET state = 'succeeded' WHERE challenge_id = 'chl-1'",
+                [],
+            )
+            .unwrap();
+        }
+
+        // 4. In-flight provider_test blocks removal; terminal provider_test does not.
+        {
+            let conn = rt.store().conn.lock().unwrap();
+            conn.execute(
+                "INSERT INTO v1_provider_tests (test_id, operation_id, source_operation_id, target_id, provider_id, model_id, protocol, endpoint, config_revision, config_digest, credential_ref, test_kinds_json, state, elapsed_ms, issues_json, evidence_ids_json, created_at, updated_at)
+                 VALUES ('pt-1', 'op-pt-1', NULL, 't-1', 'p-1', NULL, 'openai', 'https://api.example.com', 'rev-1', 'dig-1', 'cred-ref-1', '[\"auth\"]', 'running', NULL, '[]', '[]', '2026-11-20T00:00:00Z', '2026-11-20T00:00:00Z')",
+                [],
+            )
+            .unwrap();
+        }
+        assert_in_use(Arc::clone(&rt), iid.clone(), rev.clone()).await;
+        {
+            let conn = rt.store().conn.lock().unwrap();
+            conn.execute(
+                "UPDATE v1_provider_tests SET state = 'succeeded' WHERE test_id = 'pt-1'",
+                [],
+            )
+            .unwrap();
+        }
+
+        // Once all references clear / become terminal, removal succeeds.
+        let (outcome, removed) = rt
+            .dispatch(
+                "credential.remove",
+                json!({
+                    "instanceId": iid,
+                    "credentialId": "cred-ref-1",
+                    "expectedRevision": rev,
+                }),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(outcome, ResponseOutcome::Succeeded);
+        assert_eq!(removed["removedCredentialId"], "cred-ref-1");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn credential_write_enforces_0700_0600_sqlite_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let (_tmp, rt, iid) = fresh_home("cred-perms");
+        rt.dispatch(
+            "credential.write",
+            json!({
+                "instanceId": iid,
+                "credentialId": "cred-perm-1",
+                "kind": "api_key",
+                "name": "perm",
+                "secret": "sk-perm-secret",
+            }),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let v1_dir = rt.store().home().join("v1");
+        assert_eq!(
+            std::fs::metadata(&v1_dir).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        for suffix in ["", "-wal", "-shm"] {
+            let mut os = v1_dir.join("state.sqlite").as_os_str().to_os_string();
+            os.push(suffix);
+            let p = std::path::PathBuf::from(os);
+            if p.exists() {
+                assert_eq!(
+                    std::fs::metadata(&p).unwrap().permissions().mode() & 0o777,
+                    0o600
+                );
+            }
+        }
     }
 }

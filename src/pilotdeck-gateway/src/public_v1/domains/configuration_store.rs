@@ -10,26 +10,21 @@
 //!
 //! Physical placement: the tables live in the v1 instance's own SQLite
 //! database (`<AGENTCPM_PD_HOME>/v1/state.sqlite`, 007 §8) alongside the S2
-//! core tables. `V1Store`'s connection is private to `store.rs`, and the
-//! substrate's frozen `DomainHandler` signature has no per-domain state
-//! slot, so this module opens its own short-lived `rusqlite` connection per
-//! operation (`ConfigDb::open`). The file already runs `WAL` +
-//! `busy_timeout` (set at store creation, and re-asserted here), and every
-//! write runs in an `IMMEDIATE` transaction, so concurrent store/domain
-//! writers serialize on SQLite's own locks instead of deadlocking.
+//! core tables. Production handlers execute directly against `V1Store::conn`
+//! inside `tokio::task::spawn_blocking` (no per-request SQLite open or DDL);
+//! `#[cfg(test)] ConfigDb` provides a helper for store-surgery unit fixtures.
 //!
-//! DDL is registered twice on purpose: once through
-//! `DomainRegistry::schema` (the substrate hook `V1Store::init_schema`
-//! executes when the database is created) and once idempotently in
-//! `ConfigDb::open` as defense in depth for databases created by builds
-//! without this domain compiled in.
+//! DDL is registered through `DomainRegistry::schema` (the substrate hook
+//! `V1Store::init_schema` executes once when the database is created).
 
 use std::collections::BTreeMap;
 use std::path::Path;
 
 use agentcpm_pd_protocol::errors::{CODE_UNAVAILABLE, ContractError, EffectStatus, RetrySpec};
 use rusqlite::OptionalExtension;
-use rusqlite::{Connection, TransactionBehavior, params};
+#[cfg(test)]
+use rusqlite::TransactionBehavior;
+use rusqlite::{Connection, params};
 use serde_json::{Value, json};
 
 use crate::public_v1::store::now_rfc3339;
@@ -144,33 +139,123 @@ pub(super) fn storage_err_from(err: rusqlite::Error) -> ContractError {
     storage_err(err.to_string())
 }
 
-/// A short-lived connection to the v1 state database for one operation.
+/// Enforces `0700` on `<home>/v1` and `0600` on `state.sqlite`,
+/// `state.sqlite-wal`, and `state.sqlite-shm` without ignoring permission
+/// errors (including newly created WAL/SHM sidecars after writes).
+pub(crate) fn enforce_v1_sqlite_permissions(home: &Path) -> Result<(), ContractError> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let v1_dir = home.join("v1");
+        match std::fs::symlink_metadata(&v1_dir) {
+            Ok(meta) => {
+                if meta.file_type().is_symlink() {
+                    return Err(storage_err(format!(
+                        "refusing symlinked v1 directory {}",
+                        v1_dir.display()
+                    )));
+                }
+                std::fs::set_permissions(&v1_dir, std::fs::Permissions::from_mode(0o700))
+                    .map_err(|e| storage_err(format!("chmod 0700 {}: {e}", v1_dir.display())))?;
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(err) => {
+                return Err(storage_err(format!(
+                    "stat {}: {e}",
+                    v1_dir.display(),
+                    e = err
+                )));
+            }
+        }
+        let db_path = v1_dir.join("state.sqlite");
+        for suffix in ["", "-wal", "-shm"] {
+            let mut os = db_path.as_os_str().to_os_string();
+            os.push(suffix);
+            let p = std::path::PathBuf::from(os);
+            match std::fs::symlink_metadata(&p) {
+                Ok(meta) => {
+                    if meta.file_type().is_symlink() {
+                        return Err(storage_err(format!(
+                            "refusing symlinked sqlite file {}",
+                            p.display()
+                        )));
+                    }
+                    std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600))
+                        .map_err(|e| storage_err(format!("chmod 0600 {}: {e}", p.display())))?;
+                }
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(err) => {
+                    return Err(storage_err(format!("stat {}: {err}", p.display())));
+                }
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = home;
+    }
+    Ok(())
+}
+
+/// Test-only short-lived connection helper to `<home>/v1/state.sqlite`.
+#[cfg(test)]
 pub(super) struct ConfigDb {
     conn: Connection,
 }
 
+#[cfg(test)]
+#[allow(dead_code)]
 impl ConfigDb {
-    /// Opens `<home>/v1/state.sqlite` with the same durability pragmas the
-    /// store asserts and runs the (idempotent) domain DDL.
+    /// Opens `<home>/v1/state.sqlite` cleanly: sets `busy_timeout` BEFORE
+    /// `journal_mode = WAL`, ensures schema only if missing, and enforces
+    /// `0700`/`0600` directory and WAL/SHM permissions.
     pub(super) fn open(home: &Path) -> Result<Self, ContractError> {
-        let db_path = home.join("v1").join("state.sqlite");
+        let v1_dir = home.join("v1");
+        std::fs::create_dir_all(&v1_dir)
+            .map_err(|e| storage_err(format!("mkdir {}: {e}", v1_dir.display())))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&v1_dir, std::fs::Permissions::from_mode(0o700))
+                .map_err(|e| storage_err(format!("chmod 0700 {}: {e}", v1_dir.display())))?;
+        }
+        let db_path = v1_dir.join("state.sqlite");
+        #[cfg(unix)]
+        if !db_path.exists() {
+            use std::os::unix::fs::OpenOptionsExt;
+            std::fs::OpenOptions::new()
+                .create(true)
+                .truncate(false)
+                .write(true)
+                .mode(0o600)
+                .open(&db_path)
+                .map_err(|e| storage_err(format!("create {}: {e}", db_path.display())))?;
+        }
         let conn = Connection::open(&db_path)
             .map_err(|e| storage_err(format!("open {}: {e}", db_path.display())))?;
         conn.execute_batch(
-            "PRAGMA journal_mode = WAL;
+            "PRAGMA busy_timeout = 5000;
+             PRAGMA journal_mode = WAL;
              PRAGMA synchronous = FULL;
-             PRAGMA busy_timeout = 5000;",
+             PRAGMA foreign_keys = ON;",
         )
         .map_err(|e| storage_err(format!("sqlite pragma: {e}")))?;
-        for (_table, ddl) in domain_ddl() {
-            conn.execute_batch(ddl).map_err(storage_err_from)?;
+        let has_schema: i64 = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'v1_config_layer_rows')",
+                [],
+                |r| r.get(0),
+            )
+            .map_err(storage_err_from)?;
+        if has_schema == 0 {
+            for (_table, ddl) in domain_ddl() {
+                conn.execute_batch(ddl).map_err(storage_err_from)?;
+            }
         }
+        enforce_v1_sqlite_permissions(home)?;
         Ok(Self { conn })
     }
 
-    /// Runs `f` inside one `IMMEDIATE` transaction (all writes serialize on
-    /// the SQLite write lock; the upgrade-deadlock window of deferred
-    /// transactions never opens).
     pub(super) fn with_tx<T>(
         &mut self,
         f: impl FnOnce(&Connection) -> Result<T, ContractError>,
@@ -184,66 +269,27 @@ impl ConfigDb {
         Ok(out)
     }
 
-    /// Begins one `IMMEDIATE` transaction for the multi-step
-    /// `configuration.reload` flow (which must commit its rejection record
-    /// even when it answers with an error).
-    pub(super) fn begin(&mut self) -> Result<ConfigTx<'_>, ContractError> {
-        let tx = self
-            .conn
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(storage_err_from)?;
-        Ok(ConfigTx { tx })
-    }
-
-    // -----------------------------------------------------------------
-    // Layer reads
-    // -----------------------------------------------------------------
-
     /// All entries of one layer, ordered by key (deterministic reads).
     pub(super) fn read_layer(&self, layer: &str) -> Result<LayerMap, ContractError> {
         read_layer(&self.conn, layer)
     }
 
     /// The layer's stored revision (`BASE_REVISION` until first written).
+    #[allow(dead_code)]
     pub(super) fn layer_revision(&self, layer: &str) -> Result<String, ContractError> {
         layer_revision(&self.conn, layer)
     }
-
-    // -----------------------------------------------------------------
-    // Effective (applied) state
-    // -----------------------------------------------------------------
 
     pub(super) fn effective(&self) -> Result<EffectiveState, ContractError> {
         effective_row(&self.conn)
     }
 
-    // -----------------------------------------------------------------
-    // Test support: raw connection access for store-surgery fixtures.
-    // -----------------------------------------------------------------
-    #[cfg(test)]
     pub(super) fn conn(&self) -> &Connection {
         &self.conn
     }
 
-    #[cfg(test)]
     pub(super) fn reload_operation(&self, operation_id: &str) -> Option<OperationRecord> {
         read_operation(&self.conn, operation_id).ok().flatten()
-    }
-}
-
-/// A manual `IMMEDIATE` transaction for the `configuration.reload` flow
-/// (which commits its rejection record even when answering with an error).
-pub(super) struct ConfigTx<'a> {
-    tx: rusqlite::Transaction<'a>,
-}
-
-impl ConfigTx<'_> {
-    pub(super) fn conn(&self) -> &Connection {
-        &self.tx
-    }
-
-    pub(super) fn commit(self) -> Result<(), ContractError> {
-        self.tx.commit().map_err(storage_err_from)
     }
 }
 
@@ -302,7 +348,9 @@ pub(super) fn layer_revision(conn: &Connection, layer: &str) -> Result<String, C
     Ok(rev.unwrap_or_else(|| BASE_REVISION.to_owned()))
 }
 
-pub(super) fn effective_row(conn: &Connection) -> Result<EffectiveState, ContractError> {
+pub(super) fn effective_row_opt(
+    conn: &Connection,
+) -> Result<Option<EffectiveState>, ContractError> {
     let row: Option<(String, String, String)> = conn
         .query_row(
             "SELECT generation, reload_state, applied_json
@@ -312,27 +360,28 @@ pub(super) fn effective_row(conn: &Connection) -> Result<EffectiveState, Contrac
         )
         .optional()
         .map_err(storage_err_from)?;
-    Ok(match row {
-        Some((generation, reload_state, applied_json)) => {
-            let applied = serde_json::from_str::<Value>(&applied_json)
-                .ok()
-                .and_then(|v| v.as_object().cloned())
-                .unwrap_or_default();
-            EffectiveState {
-                generation,
-                reload_state,
-                applied: applied
-                    .into_iter()
-                    .filter_map(|(k, v)| v.as_str().map(|s| (k, s.to_owned())))
-                    .collect(),
-            }
+    Ok(row.map(|(generation, reload_state, applied_json)| {
+        let applied = serde_json::from_str::<Value>(&applied_json)
+            .ok()
+            .and_then(|v| v.as_object().cloned())
+            .unwrap_or_default();
+        EffectiveState {
+            generation,
+            reload_state,
+            applied: applied
+                .into_iter()
+                .filter_map(|(k, v)| v.as_str().map(|s| (k, s.to_owned())))
+                .collect(),
         }
-        None => EffectiveState {
-            generation: BASE_GENERATION.to_owned(),
-            reload_state: "current".to_owned(),
-            applied: BTreeMap::new(),
-        },
-    })
+    }))
+}
+
+pub(super) fn effective_row(conn: &Connection) -> Result<EffectiveState, ContractError> {
+    Ok(effective_row_opt(conn)?.unwrap_or_else(|| EffectiveState {
+        generation: BASE_GENERATION.to_owned(),
+        reload_state: "current".to_owned(),
+        applied: BTreeMap::new(),
+    }))
 }
 
 /// Reads one stored entry without materializing the whole layer (used by the

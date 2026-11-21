@@ -466,13 +466,61 @@ impl PublicV1Runtime {
     /// event is projected into the authoritative SQLite store.
     async fn drive_owned_turn(self: &Arc<Self>, submitter: &Arc<TurnSubmitter>, run: StoredRun) {
         let run_id = run.run_id.clone();
-        let turn_input = json!({
+        let resolved_runtime_prefs = if let Ok(conn) = self.store.conn.lock() {
+            let init_rev = &self.store.meta().initialization_revision;
+            let cfg_map = crate::public_v1::domains::configuration::resolve_effective_map_in_tx(
+                &conn,
+                &run.project_id,
+                &run.session_id,
+            )
+            .ok();
+            let model = crate::public_v1::domains::models::resolve_effective_model_for_run_in_tx(
+                &conn,
+                init_rev,
+                &run.project_id,
+                &run.session_id,
+            )
+            .ok()
+            .flatten();
+            let ctx = crate::public_v1::domains::context::resolve_effective_context_for_run_in_tx(
+                &conn,
+                init_rev,
+                &run.project_id,
+                &run.session_id,
+            )
+            .ok();
+            Some((cfg_map, model, ctx))
+        } else {
+            None
+        };
+        let mut turn_input = json!({
             "sessionKey": run.session_id,
             "projectKey": run.project_id,
             "runId": run.run_id,
             "channelKey": "agentcpm-pd",
             "message": extract_prompt_text(&run.input),
         });
+        if let Some((cfg_map, model, ctx)) = resolved_runtime_prefs
+            && let Some(obj) = turn_input.as_object_mut()
+        {
+            if let Some(map) = cfg_map
+                && !map.is_empty()
+            {
+                obj.insert("effectiveConfig".to_owned(), json!(map));
+            }
+            if let Some((provider_id, model_id)) = model {
+                obj.insert("providerId".to_owned(), json!(provider_id));
+                obj.insert("modelId".to_owned(), json!(model_id));
+            }
+            if let Some(ctx_prefs) = ctx {
+                if let Some(thinking) = ctx_prefs.thinking {
+                    obj.insert("thinking".to_owned(), json!(thinking));
+                }
+                if let Some(style_id) = ctx_prefs.output_style_id {
+                    obj.insert("outputStyleId".to_owned(), json!(style_id));
+                }
+            }
+        }
         let js_input = match pilotdeck_protocol::parse_json(&turn_input.to_string()) {
             Ok(value) => value,
             Err(error) => {
@@ -628,6 +676,41 @@ impl PublicV1Runtime {
                     .unwrap_or_default();
                 let success = result.get("type").and_then(Value::as_str) == Some("success")
                     || finish_reason == "completed";
+                if let Some(usage) = value.get("usage").or_else(|| result.get("usage"))
+                    && let Some(obj) = usage.as_object()
+                {
+                    let finite_f64 = |keys: &[&str]| -> Option<f64> {
+                        keys.iter()
+                            .find_map(|k| obj.get(*k).and_then(Value::as_f64))
+                            .filter(|v| v.is_finite() && *v >= 0.0)
+                    };
+                    if let (Some(input_tokens), Some(output_tokens)) = (
+                        finite_f64(&["inputTokens", "input_tokens", "promptTokens"]),
+                        finite_f64(&["outputTokens", "output_tokens", "completionTokens"]),
+                    ) {
+                        let cost = finite_f64(&["cost", "costUsd", "totalCost"]);
+                        let model = value
+                            .get("providerId")
+                            .and_then(Value::as_str)
+                            .zip(value.get("modelId").and_then(Value::as_str))
+                            .map(|(p, m)| (p.to_owned(), m.to_owned()));
+                        let _ = self.store.record_usage(
+                            crate::public_v1::domains::usage::UsageRecordIn::actual_tokens(
+                                crate::public_v1::store::now_rfc3339(),
+                                crate::public_v1::domains::usage::UsageScope::Session {
+                                    project_id: run.project_id.clone(),
+                                    session_id: run.session_id.clone(),
+                                },
+                                model,
+                                input_tokens,
+                                output_tokens,
+                                cost,
+                                "USD",
+                                "turn_completed",
+                            ),
+                        );
+                    }
+                }
                 if success {
                     let payload =
                         json!({"runId": run.run_id, "stopReason": finish_reason, "result": result});
@@ -683,6 +766,20 @@ impl PublicV1Runtime {
             .collect();
         let mut caps = Vec::with_capacity(registered.len() + 2);
         for op in registered {
+            if op.id == "context.compact" {
+                caps.push(json!({
+                    "methodId": op.id,
+                    "available": false,
+                    "reason": "CAPABILITY_UNAVAILABLE",
+                    "schemaVersion": OPERATION_VERSION,
+                    "limits": limits_pair,
+                    "supported": true,
+                    "configured": false,
+                    "authorized": Value::Null,
+                    "requiredPermission": [],
+                }));
+                continue;
+            }
             let is_remote = op.execution != ExecutionMode::Local;
             let available = is_remote || op.id == "schema.list" || op.id == "schema.get";
             if available {

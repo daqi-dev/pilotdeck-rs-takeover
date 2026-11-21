@@ -857,6 +857,25 @@ async fn compact_busy_refusal_then_idle_noop() {
     assert_eq!(replay["operationId"], operation_id.as_str());
     assert_eq!(replay["deduplicated"], json!(true));
 
+    // requests.lookup also resolves context.compact by idempotencyKey.
+    let out = await_cli(
+        root,
+        &[
+            "requests",
+            "lookup",
+            "--output",
+            "json",
+            "--method-id",
+            "context.compact",
+            "--idempotency-key",
+            "e2e-ctx-cmpt-1",
+        ],
+    );
+    let lookup = expect_ok("requests.lookup", &out);
+    assert_eq!(lookup["requestState"], "accepted");
+    assert_eq!(lookup["resource"]["kind"], "operation");
+    assert_eq!(lookup["resource"]["operationId"], operation_id.as_str());
+
     // A stale revision is a definitive conflict.
     let out = await_cli(
         root,

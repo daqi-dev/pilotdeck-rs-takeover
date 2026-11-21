@@ -413,17 +413,9 @@ pub(super) fn parse_tool_scope(
 // the same resolution `policy.get` uses)
 // ---------------------------------------------------------------------------
 
-/// A policy rule matches a tool when its `tool` selector is the exact id or
-/// `*` (the old line's `matchesToolSelector` selector semantics).
-fn rule_matches_tool(rule: &Value, tool_id: &str) -> bool {
-    rule.get("tool")
-        .and_then(Value::as_str)
-        .is_some_and(|selector| selector == "*" || selector == tool_id)
-}
-
 /// The effective policy state one catalog view is projected from.
 struct PolicyProjection {
-    rules: Vec<Value>,
+    view: crate::public_v1::domains::policy::PolicyView,
     revision: String,
     generation: String,
 }
@@ -433,47 +425,28 @@ fn effective_policy(
     scope: &ToolScope,
 ) -> Result<PolicyProjection, ContractError> {
     let view = rt.store().get_policy(&scope.policy_scope())?;
+    let revision = view.policy["revision"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
+    let generation = view.policy["effectiveGeneration"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
     Ok(PolicyProjection {
-        rules: view
-            .policy
-            .get("rules")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default(),
-        revision: view.policy["revision"]
-            .as_str()
-            .unwrap_or_default()
-            .to_owned(),
-        generation: view.policy["effectiveGeneration"]
-            .as_str()
-            .unwrap_or_default()
-            .to_owned(),
+        view,
+        revision,
+        generation,
     })
 }
 
 impl PolicyProjection {
-    /// Projects the rules onto one tool: whether a deny rule blocks it and
-    /// the ruleIds of the ask rules gating it.
-    fn gates(&self, tool_id: &str) -> (bool, Vec<String>) {
-        let mut denied = false;
-        let mut ask_rule_ids = Vec::new();
-        for rule in &self.rules {
-            if !rule_matches_tool(rule, tool_id) {
-                continue;
-            }
-            match rule.get("effect").and_then(Value::as_str) {
-                Some("deny") => denied = true,
-                Some("ask") => {
-                    if let Some(rule_id) = rule.get("ruleId").and_then(Value::as_str) {
-                        ask_rule_ids.push(rule_id.to_owned());
-                    }
-                }
-                _ => {}
-            }
-        }
-        ask_rule_ids.sort();
-        ask_rule_ids.dedup();
-        (denied, ask_rule_ids)
+    /// Projects the rules onto one tool via `policy::evaluate_policy`: whether
+    /// policy denies it and the ruleIds of any ask rules gating it.
+    fn gates(&self, tool_id: &str, resource: Option<&str>) -> (bool, Vec<String>) {
+        use crate::public_v1::domains::policy::{PolicyDecision, evaluate_policy};
+        let eval = evaluate_policy(&self.view, tool_id, resource);
+        (eval.decision == PolicyDecision::Deny, eval.ask_rule_ids)
     }
 }
 
@@ -572,7 +545,7 @@ async fn tools_list(
                 continue;
             }
         }
-        let (denied, ask_rule_ids) = policy.gates(&entry.tool_id);
+        let (denied, ask_rule_ids) = policy.gates(&entry.tool_id, None);
         items.push(tool_item_json(
             entry,
             denied,
@@ -616,7 +589,7 @@ async fn tools_describe(
         .find(|entry| entry.tool_id == tool_id)
         .ok_or_else(|| tools_not_found("tool", &tool_id))?;
     let policy = effective_policy(&rt, &scope)?;
-    let (denied, ask_rule_ids) = policy.gates(&entry.tool_id);
+    let (denied, ask_rule_ids) = policy.gates(&entry.tool_id, None);
     Ok((
         ResponseOutcome::Succeeded,
         json!({
@@ -727,7 +700,19 @@ async fn tools_test(
         .iter()
         .find(|entry| entry.tool_id == tool_id)
         .ok_or_else(|| tools_not_found("tool", &tool_id))?;
-    let (policy_denied, ask_rule_ids) = effective_policy(&rt, &scope)?.gates(&entry.tool_id);
+    let (policy_denied, ask_rule_ids) = {
+        use crate::public_v1::domains::policy::{
+            PolicyDecision, evaluate_policy_for_scope, resource_string_from_arguments,
+        };
+        let resource = resource_string_from_arguments(&arguments);
+        let eval = evaluate_policy_for_scope(
+            rt.store(),
+            &scope.policy_scope(),
+            &entry.tool_id,
+            resource.as_deref(),
+        );
+        (eval.decision == PolicyDecision::Deny, eval.ask_rule_ids)
+    };
     let workspace = scope.workspace(&rt)?;
     let db = tools_domain_db(&rt)?;
 

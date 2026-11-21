@@ -634,4 +634,36 @@ async fn run_generation_is_explainable_and_not_hot_swapped() {
         run["run"]["config"], config,
         "a run must keep the configuration generation it holds across config changes"
     );
+
+    // A new run submitted after the configuration update captures the new
+    // applied configuration generation and revision.
+    let out = await_cli(
+        root,
+        &[
+            "run",
+            "submit",
+            "--output",
+            "json",
+            "--session-id",
+            &session_id,
+            "--prompt",
+            "anchor3-after-update",
+        ],
+    );
+    let submitted2 = expect_ok("run.submit", &out);
+    let run2_id = submitted2["runId"].as_str().unwrap().to_owned();
+    let out = await_cli(
+        root,
+        &["run", "get", "--output", "json", "--run-id", &run2_id],
+    );
+    let run2 = expect_ok("run.get", &out);
+    assert_eq!(
+        run2["run"]["config"]["effectiveGeneration"],
+        second["effectiveGeneration"]
+    );
+    assert_eq!(
+        run2["run"]["config"]["configRevision"],
+        second["storedRevision"]
+    );
+    assert_ne!(run2["run"]["config"], config);
 }

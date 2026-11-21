@@ -991,3 +991,40 @@ async fn instance_inspect_initialization_reports_four_states() {
         let _ = std::fs::remove_file(incompatible_dir.join("local.json"));
     }
 }
+
+#[tokio::test]
+async fn policy_rejects_blank_tool_rule_and_configuration_update_cannot_bypass_policy_domain() {
+    let home = TestHome::new("t005-policy-boundary");
+    let instance_scope = json!({"kind": "instance"});
+    let default = expect_ok("policy.get", &policy_get(home.path(), &instance_scope));
+    let rev = default["policy"]["revision"].as_str().unwrap().to_owned();
+
+    let bad_tool = policy_update(
+        home.path(),
+        &instance_scope,
+        &rev,
+        "ask",
+        &json!([{"ruleId": "r-blank", "effect": "allow", "tool": "  "}]),
+    );
+    assert_eq!(failure_code("policy.update", &bad_tool), "INVALID_ARGUMENT");
+
+    let cfg_bypass = await_cli(
+        home.path(),
+        &[
+            "settings",
+            "set",
+            "--output",
+            "json",
+            "--scope",
+            r#"{"kind":"instance"}"#,
+            "--expected-revision",
+            "cfg-0",
+            "--changes",
+            r#"[{"key":"policy.default","action":"set","value":{"mode":"allowConfigured"}}]"#,
+        ],
+    );
+    assert_eq!(
+        failure_code("configuration.update", &cfg_bypass),
+        "INVALID_ARGUMENT"
+    );
+}

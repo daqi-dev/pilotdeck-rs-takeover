@@ -521,7 +521,7 @@ impl V1Store {
         let mut orphan_stmt = tx
             .prepare(
                 "SELECT operation_id, COALESCE(session_id, ''), operation_type FROM operations
-                 WHERE operation_type IN ('search.start', 'provider_test.start', 'provider_test.retry', 'terminals.close')
+                 WHERE operation_type IN ('search.start', 'provider_test.start', 'provider_test.retry', 'terminals.close', 'model_references.apply', 'discovery.execute')
                    AND terminal = 0",
             )
             .map_err(map_sql_err)?;
@@ -532,12 +532,14 @@ impl V1Store {
             .map_err(map_sql_err)?;
         drop(orphan_stmt);
         for (operation_id, op_session_id, operation_type) in orphan_operations {
-            let interrupted_message = if operation_type == "search.start" {
-                "gateway restart interrupted the search scan"
-            } else if operation_type == "terminals.close" {
-                "gateway restart interrupted the terminal close operation"
-            } else {
-                "gateway restart interrupted the provider test driver"
+            let interrupted_message = match operation_type.as_str() {
+                "search.start" => "gateway restart interrupted the search scan",
+                "terminals.close" => "gateway restart interrupted the terminal close operation",
+                "model_references.apply" => {
+                    "gateway restart interrupted the model reference apply operation"
+                }
+                "discovery.execute" => "gateway restart interrupted the discovery execution",
+                _ => "gateway restart interrupted the provider test driver",
             };
             let rev = next_rev_in_tx(&tx)?;
             let cursor = append_event_in_tx(
@@ -616,6 +618,8 @@ impl V1Store {
             )
             .map_err(map_sql_err)?;
         }
+        crate::public_v1::domains::discovery::recover_orphaned_discovery_executions(&tx, &now)
+            .map_err(map_sql_err)?;
 
         tx.commit().map_err(map_sql_err)?;
         Ok(())
@@ -1329,9 +1333,17 @@ impl V1Store {
         }
         let start_immediately = !pin_is_live && queued_exists == 0;
         let input_json = serde_json::to_string(input).unwrap_or_else(|_| "{}".into());
+        let (config_rev, effective_gen) =
+            crate::public_v1::domains::configuration::snapshot_run_config_in_tx(
+                &tx,
+                project_id,
+                session_id,
+                &self.meta.initialization_revision,
+                &self.meta.generation,
+            )?;
         let config_json = json!({
-            "configRevision": self.meta.initialization_revision,
-            "effectiveGeneration": self.meta.generation,
+            "configRevision": config_rev,
+            "effectiveGeneration": effective_gen,
         });
         let config_str = serde_json::to_string(&config_json).unwrap();
 
@@ -2109,6 +2121,16 @@ impl V1Store {
             params![new_rev, ans_json, policy_rev, interaction_id],
         )
         .map_err(map_sql_err)?;
+        if let Some(ref p_rev) = policy_rev {
+            self.record_remembered_policy_decision_in_tx(
+                &tx,
+                interaction_id,
+                remember_scope.unwrap_or("none"),
+                &answer_value,
+                p_rev,
+                &now,
+            )?;
+        }
 
         let run = fetch_run_in_tx(&tx, &existing.run_id)?;
         let wake = run.as_ref().is_some_and(|r| !r.terminal);

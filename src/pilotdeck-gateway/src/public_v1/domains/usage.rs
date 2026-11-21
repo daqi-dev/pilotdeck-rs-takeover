@@ -34,8 +34,8 @@ use agentcpm_pd_protocol::contract::ResponseOutcome;
 use agentcpm_pd_protocol::errors::{
     CODE_INVALID_ARGUMENT, CODE_UNAVAILABLE, ContractError, EffectStatus, RetrySpec,
 };
-use chrono::{DateTime, Utc};
-use rusqlite::{Connection, OptionalExtension, params};
+use chrono::{DateTime, Duration, SecondsFormat, Utc};
+use rusqlite::{Connection, OptionalExtension, params, params_from_iter, types::Value as SqlValue};
 use serde_json::{Value, json};
 
 use crate::public_v1::domains::DomainRegistry;
@@ -293,6 +293,11 @@ impl V1Store {
     /// precedent for suppressing the warning deliberately).
     #[allow(dead_code)]
     pub(crate) fn record_usage(&self, record: UsageRecordIn) -> Result<String, ContractError> {
+        let occurred_at = normalize_occurred_at(&record.occurred_at)?;
+        validate_metric_in(&record.input, "input")?;
+        validate_metric_in(&record.output, "output")?;
+        validate_metric_in(&record.cost, "cost")?;
+
         let (project_id, session_id) = match &record.scope {
             UsageScope::Instance => (None, None),
             UsageScope::Project { project_id } => (Some(project_id.clone()), None),
@@ -306,7 +311,7 @@ impl V1Store {
             None => (None, None),
         };
         let record_id = self.next_id();
-        let conn = self.conn.lock().expect("sqlite mutex");
+        let conn = self.conn.lock().map_err(|_| usage_mutex_err())?;
         conn.execute(
             "INSERT INTO v1_usage_records
                  (record_id, occurred_at, project_id, session_id, provider_id, model_id,
@@ -316,7 +321,7 @@ impl V1Store {
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
             params![
                 record_id,
-                record.occurred_at,
+                occurred_at,
                 project_id,
                 session_id,
                 provider_id,
@@ -331,21 +336,59 @@ impl V1Store {
                 record.cost.status,
                 record.cost.source,
                 record.cost.unit,
-                Utc::now().to_rfc3339(),
+                Utc::now().to_rfc3339_opts(SecondsFormat::Nanos, true),
             ],
         )
         .map_err(usage_sql_err)?;
         Ok(record_id)
     }
 
-    /// Reads every usage record (ordered by time then id); callers filter.
+    /// Reads every usage record (ordered by time then id); test-inspection seam.
     #[allow(dead_code)]
     pub(crate) fn all_usage_records(&self) -> Result<Vec<StoredUsageRecord>, ContractError> {
-        let conn = self.conn.lock().expect("sqlite mutex");
+        let conn = self.conn.lock().map_err(|_| usage_mutex_err())?;
         read_all_usage_records(&conn)
     }
 }
 
+fn usage_mutex_err() -> ContractError {
+    ContractError::new(
+        CODE_UNAVAILABLE,
+        "sqlite store mutex poisoned".to_owned(),
+        RetrySpec::backoff_read(Some(250)),
+        EffectStatus::Unknown,
+    )
+}
+
+fn normalize_occurred_at(raw: &str) -> Result<String, ContractError> {
+    let dt = DateTime::parse_from_rfc3339(raw).map_err(|_| {
+        ContractError::new(
+            CODE_INVALID_ARGUMENT,
+            format!("`occurredAt` must be an RFC 3339 date-time, got `{raw}`"),
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        )
+    })?;
+    Ok(dt
+        .with_timezone(&Utc)
+        .to_rfc3339_opts(SecondsFormat::Nanos, true))
+}
+
+fn validate_metric_in(metric: &Metric, label: &str) -> Result<(), ContractError> {
+    if let Some(v) = metric.value
+        && (!v.is_finite() || v < 0.0)
+    {
+        return Err(ContractError::new(
+            CODE_INVALID_ARGUMENT,
+            format!("usage `{label}` metric value must be finite and non-negative"),
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        ));
+    }
+    Ok(())
+}
+
+#[allow(dead_code)]
 fn read_all_usage_records(conn: &Connection) -> Result<Vec<StoredUsageRecord>, ContractError> {
     let mut stmt = conn
         .prepare(
@@ -417,15 +460,18 @@ fn record_model_json(record: &StoredUsageRecord) -> Value {
     }
 }
 
+fn is_metric_unknown(metric: &Metric) -> bool {
+    metric.status == "unknown" || metric.value.is_none_or(|v| !v.is_finite())
+}
+
 fn metric_to_usage(metric: &Metric) -> Value {
-    let value = match (&metric.status[..], metric.value) {
-        ("unknown", _) => Value::Null,
-        (_, Some(value)) => json!(value),
-        // A non-unknown status without a value cannot satisfy the contract's
-        // if/then (`status != unknown` requires a number): report unknown.
-        (_, None) => Value::Null,
+    let unknown = is_metric_unknown(metric);
+    let value = if unknown {
+        Value::Null
+    } else {
+        metric.value.map(|v| json!(v)).unwrap_or(Value::Null)
     };
-    let status = if value.is_null() && metric.status != "unknown" {
+    let status = if unknown || value.is_null() {
         "unknown"
     } else {
         &metric.status
@@ -438,19 +484,22 @@ fn metric_to_usage(metric: &Metric) -> Value {
     })
 }
 
-/// Aggregates one metric across records (module-doc rules).
+/// Aggregates one metric across records (module-doc rules). Any `unknown`,
+/// missing, non-finite, or overflowing sum cleanly degrades to `unknown`/`null`.
 fn aggregate_metric<'a>(metrics: impl Iterator<Item = &'a Metric>, default_unit: &str) -> Value {
     let mut any = false;
     let mut any_unknown = false;
     let mut any_estimated = false;
-    let mut sum = 0.0;
+    let mut sum = 0.0_f64;
     let mut units: Vec<&str> = Vec::new();
     let mut sources: Vec<&str> = Vec::new();
     for metric in metrics {
         any = true;
-        any_unknown |= metric.status == "unknown";
+        any_unknown |= is_metric_unknown(metric);
         any_estimated |= metric.status == "estimated";
-        if let Some(value) = metric.value {
+        if let Some(value) = metric.value
+            && value.is_finite()
+        {
             sum += value;
         }
         if !units.contains(&metric.unit.as_str()) {
@@ -475,9 +524,9 @@ fn aggregate_metric<'a>(metrics: impl Iterator<Item = &'a Metric>, default_unit:
     } else {
         sources[0]
     };
-    if any_unknown || mixed_units {
-        // Unknown members or incommensurable units: the honest aggregate is
-        // unknown/null (never a partial sum presented as the total).
+    if any_unknown || mixed_units || !sum.is_finite() {
+        // Unknown members, non-finite/overflowing sum, or incommensurable units:
+        // the honest aggregate is unknown/null (never partial sum or status/value mismatch).
         return json!({
             "status": "unknown",
             "value": Value::Null,
@@ -494,7 +543,7 @@ fn aggregate_metric<'a>(metrics: impl Iterator<Item = &'a Metric>, default_unit:
 }
 
 // ---------------------------------------------------------------------------
-// Query filtering
+// Query filtering (SQL-backed with timezone-safe verification)
 // ---------------------------------------------------------------------------
 
 struct UsageQuery {
@@ -505,10 +554,7 @@ struct UsageQuery {
 }
 
 impl UsageQuery {
-    fn parse(
-        rt: &PublicV1Runtime,
-        input: &Value,
-    ) -> Result<(Self, Vec<StoredUsageRecord>), ContractError> {
+    fn parse_filters(rt: &PublicV1Runtime, input: &Value) -> Result<Self, ContractError> {
         let scope = parse_scope(rt, input)?;
         let parse_bound = |field: &str| -> Result<Option<DateTime<Utc>>, ContractError> {
             match input.get(field) {
@@ -552,54 +598,170 @@ impl UsageQuery {
                 Some((provider_id.to_owned(), model_id.to_owned()))
             }
         };
-
-        let conn = rt.store().conn.lock().expect("sqlite mutex");
-        let all = read_all_usage_records(&conn)?;
-        drop(conn);
-
-        let (filter_project, filter_session) = scope.record_filter();
-        let query = Self {
+        Ok(Self {
             scope,
             from,
             to,
             model,
+        })
+    }
+
+    fn build_sql_where(&self, widen_time_bounds: bool) -> (String, Vec<SqlValue>) {
+        let mut clauses: Vec<String> = Vec::new();
+        let mut binds: Vec<SqlValue> = Vec::new();
+        let (filter_project, filter_session) = self.scope.record_filter();
+        if let Some(project_id) = filter_project {
+            clauses.push("project_id = ?".to_owned());
+            binds.push(SqlValue::Text(project_id));
+        }
+        if let Some(session_id) = filter_session {
+            clauses.push("session_id = ?".to_owned());
+            binds.push(SqlValue::Text(session_id));
+        }
+        if let Some((provider_id, model_id)) = &self.model {
+            clauses.push("provider_id = ?".to_owned());
+            binds.push(SqlValue::Text(provider_id.clone()));
+            clauses.push("model_id = ?".to_owned());
+            binds.push(SqlValue::Text(model_id.clone()));
+        }
+        if let Some(from) = self.from {
+            let bound = if widen_time_bounds {
+                from - Duration::hours(25)
+            } else {
+                from
+            };
+            clauses.push("occurred_at >= ?".to_owned());
+            binds.push(SqlValue::Text(
+                bound.to_rfc3339_opts(SecondsFormat::Nanos, true),
+            ));
+        }
+        if let Some(to) = self.to {
+            let bound = if widen_time_bounds {
+                to + Duration::hours(25)
+            } else {
+                to
+            };
+            clauses.push("occurred_at <= ?".to_owned());
+            binds.push(SqlValue::Text(
+                bound.to_rfc3339_opts(SecondsFormat::Nanos, true),
+            ));
+        }
+        let where_sql = if clauses.is_empty() {
+            String::new()
+        } else {
+            format!(" WHERE {}", clauses.join(" AND "))
         };
-        let filtered: Vec<StoredUsageRecord> = all
+        (where_sql, binds)
+    }
+
+    fn matches_time_bounds(&self, record: &StoredUsageRecord) -> bool {
+        if self.from.is_none() && self.to.is_none() {
+            return true;
+        }
+        let Ok(occurred) = DateTime::parse_from_rfc3339(&record.occurred_at) else {
+            // Unparseable timestamps must not bypass explicit time bounds.
+            return false;
+        };
+        let occurred = occurred.with_timezone(&Utc);
+        if let Some(from) = self.from
+            && occurred < from
+        {
+            return false;
+        }
+        if let Some(to) = self.to
+            && occurred > to
+        {
+            return false;
+        }
+        true
+    }
+
+    fn query_matching_records(
+        &self,
+        conn: &Connection,
+    ) -> Result<Vec<StoredUsageRecord>, ContractError> {
+        let (where_sql, binds) = self.build_sql_where(true);
+        let sql = format!(
+            "SELECT record_id, occurred_at, project_id, session_id, provider_id, model_id,
+                    input_value, input_status, input_source,
+                    output_value, output_status, output_source,
+                    cost_value, cost_status, cost_source, cost_unit
+             FROM v1_usage_records{where_sql}
+             ORDER BY occurred_at ASC, record_id ASC"
+        );
+        let mut stmt = conn.prepare(&sql).map_err(usage_sql_err)?;
+        let rows = stmt
+            .query_map(params_from_iter(binds), row_to_usage_record)
+            .map_err(usage_sql_err)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(usage_sql_err)?;
+        Ok(rows
             .into_iter()
-            .filter(|record| {
-                if let Some(project_id) = &filter_project
-                    && record.project_id.as_deref() != Some(project_id.as_str())
-                {
-                    return false;
-                }
-                if let Some(session_id) = &filter_session
-                    && record.session_id.as_deref() != Some(session_id.as_str())
-                {
-                    return false;
-                }
-                if let Some((provider_id, model_id)) = &query.model
-                    && (record.provider_id.as_deref() != Some(provider_id.as_str())
-                        || record.model_id.as_deref() != Some(model_id.as_str()))
-                {
-                    return false;
-                }
-                if let Ok(occurred) = DateTime::parse_from_rfc3339(&record.occurred_at) {
-                    let occurred = occurred.with_timezone(&Utc);
-                    if let Some(from) = query.from
-                        && occurred < from
-                    {
-                        return false;
-                    }
-                    if let Some(to) = query.to
-                        && occurred > to
-                    {
-                        return false;
-                    }
-                }
-                true
-            })
-            .collect();
-        Ok((query, filtered))
+            .filter(|r| self.matches_time_bounds(r))
+            .collect())
+    }
+
+    fn query_snapshot_page(
+        &self,
+        conn: &Connection,
+        offset: usize,
+        limit: usize,
+    ) -> Result<(usize, Vec<StoredUsageRecord>), ContractError> {
+        // When no time bounds are present, SQL COUNT(*) + LIMIT/OFFSET executes
+        // entirely inside SQLite without loading non-page rows into memory.
+        if self.from.is_none() && self.to.is_none() {
+            let (where_sql, binds) = self.build_sql_where(false);
+            let count_sql = format!("SELECT COUNT(*) FROM v1_usage_records{where_sql}");
+            let total_i64: i64 = conn
+                .query_row(&count_sql, params_from_iter(binds.iter().cloned()), |r| {
+                    r.get(0)
+                })
+                .map_err(usage_sql_err)?;
+            let total = usize::try_from(total_i64).unwrap_or(0);
+            if offset > total {
+                return Err(ContractError::new(
+                    CODE_INVALID_ARGUMENT,
+                    "pagination cursor beyond end of collection".to_owned(),
+                    RetrySpec::never(),
+                    EffectStatus::NotApplied,
+                ));
+            }
+            let page_sql = format!(
+                "SELECT record_id, occurred_at, project_id, session_id, provider_id, model_id,
+                        input_value, input_status, input_source,
+                        output_value, output_status, output_source,
+                        cost_value, cost_status, cost_source, cost_unit
+                 FROM v1_usage_records{where_sql}
+                 ORDER BY occurred_at ASC, record_id ASC
+                 LIMIT ? OFFSET ?"
+            );
+            let mut page_binds = binds;
+            page_binds.push(SqlValue::Integer(limit as i64));
+            page_binds.push(SqlValue::Integer(offset as i64));
+            let mut stmt = conn.prepare(&page_sql).map_err(usage_sql_err)?;
+            let page = stmt
+                .query_map(params_from_iter(page_binds), row_to_usage_record)
+                .map_err(usage_sql_err)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(usage_sql_err)?;
+            Ok((total, page))
+        } else {
+            // Time-bounded queries still push scope/model/widened-date SQL WHERE
+            // to SQLite before exact RFC3339 instant verification + paging.
+            let matched = self.query_matching_records(conn)?;
+            let total = matched.len();
+            if offset > total {
+                return Err(ContractError::new(
+                    CODE_INVALID_ARGUMENT,
+                    "pagination cursor beyond end of collection".to_owned(),
+                    RetrySpec::never(),
+                    EffectStatus::NotApplied,
+                ));
+            }
+            let page: Vec<StoredUsageRecord> =
+                matched.into_iter().skip(offset).take(limit).collect();
+            Ok((total, page))
+        }
     }
 }
 
@@ -624,58 +786,47 @@ async fn usage_snapshot(
     rt: Arc<PublicV1Runtime>,
     input: Value,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
-    let page = input.get("page").and_then(Value::as_object);
-    let limit = page
-        .and_then(|p| p.get("limit"))
-        .and_then(Value::as_u64)
-        .unwrap_or(100)
-        .clamp(1, 500) as usize;
-    let offset = match page.and_then(|p| p.get("cursor")).and_then(Value::as_str) {
-        Some(cursor) => cursor.parse::<usize>().map_err(|_| {
-            ContractError::new(
-                CODE_INVALID_ARGUMENT,
-                format!("invalid pagination cursor `{cursor}`"),
-                RetrySpec::never(),
-                EffectStatus::NotApplied,
-            )
-        })?,
-        None => 0,
-    };
+    let rt_bg = Arc::clone(&rt);
+    let body = tokio::task::spawn_blocking(move || -> Result<Value, ContractError> {
+        let page = input.get("page").and_then(Value::as_object);
+        let limit = page
+            .and_then(|p| p.get("limit"))
+            .and_then(Value::as_u64)
+            .unwrap_or(100)
+            .clamp(1, 500) as usize;
+        let offset = match page.and_then(|p| p.get("cursor")).and_then(Value::as_str) {
+            Some(cursor) => cursor.parse::<usize>().map_err(|_| {
+                ContractError::new(
+                    CODE_INVALID_ARGUMENT,
+                    format!("invalid pagination cursor `{cursor}`"),
+                    RetrySpec::never(),
+                    EffectStatus::NotApplied,
+                )
+            })?,
+            None => 0,
+        };
 
-    let (_query, records) = UsageQuery::parse(&rt, &input)?;
-    let conn = rt.store().conn.lock().expect("sqlite mutex");
-    let snapshot_revision = usage_current_rev(&conn)?;
-    drop(conn);
+        let query = UsageQuery::parse_filters(&rt_bg, &input)?;
+        let conn = rt_bg.store().conn.lock().map_err(|_| usage_mutex_err())?;
+        let snapshot_revision = usage_current_rev(&conn)?;
+        let (total, records) = query.query_snapshot_page(&conn, offset, limit)?;
+        drop(conn);
 
-    let total = records.len();
-    if offset > total {
-        return Err(ContractError::new(
-            CODE_INVALID_ARGUMENT,
-            "pagination cursor beyond end of collection".to_owned(),
-            RetrySpec::never(),
-            EffectStatus::NotApplied,
-        )
-        .into());
-    }
-    let end = offset.saturating_add(limit).min(total);
-    let complete = end >= total;
-    let items: Vec<Value> = records
-        .iter()
-        .skip(offset)
-        .take(limit)
-        .map(|record| {
-            json!({
-                "scope": record_scope(record).to_scope_json(),
-                "model": record_model_json(record),
-                "inputTokens": metric_to_usage(&record.input),
-                "outputTokens": metric_to_usage(&record.output),
-                "cost": metric_to_usage(&record.cost),
+        let end = offset.saturating_add(limit).min(total);
+        let complete = end >= total;
+        let items: Vec<Value> = records
+            .iter()
+            .map(|record| {
+                json!({
+                    "scope": record_scope(record).to_scope_json(),
+                    "model": record_model_json(record),
+                    "inputTokens": metric_to_usage(&record.input),
+                    "outputTokens": metric_to_usage(&record.output),
+                    "cost": metric_to_usage(&record.cost),
+                })
             })
-        })
-        .collect();
-    Ok((
-        ResponseOutcome::Succeeded,
-        json!({
+            .collect();
+        Ok(json!({
             "items": items,
             "pageInfo": {
                 "snapshotRevision": snapshot_revision,
@@ -683,143 +834,153 @@ async fn usage_snapshot(
                 "complete": complete,
             },
             "complete": complete,
-        }),
-    ))
+        }))
+    })
+    .await
+    .map_err(|_| DispatchError::from(usage_mutex_err()))?
+    .map_err(DispatchError::from)?;
+    Ok((ResponseOutcome::Succeeded, body))
 }
 
 // ---------------------------------------------------------------------------
 // usage.summary
 // ---------------------------------------------------------------------------
 
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+enum GroupKey {
+    Scope(String),
+    Model(Option<String>, Option<String>),
+    DayModel(String, Option<String>, Option<String>),
+}
+
 async fn usage_summary(
     rt: Arc<PublicV1Runtime>,
     input: Value,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
-    let group_by = input
-        .get("groupBy")
-        .and_then(Value::as_str)
-        .unwrap_or("session");
-    if !matches!(group_by, "project" | "session" | "model" | "day") {
-        // Defensive: the schema enum gate normally rejects this first.
-        return Err(ContractError::new(
-            CODE_INVALID_ARGUMENT,
-            format!("groupBy must be one of project|session|model|day; got `{group_by}`"),
-            RetrySpec::never(),
-            EffectStatus::NotApplied,
-        )
-        .into());
-    }
-
-    let (query, records) = UsageQuery::parse(&rt, &input)?;
-    let query_scope = query.scope.clone();
-
-    // Group key → (row scope, row model). Insertion order follows the
-    // records' (occurred_at, record_id) order; rows are re-sorted below.
-    #[allow(clippy::type_complexity)]
-    let mut groups: Vec<(
-        String,
-        UsageScope,
-        Option<(String, String)>,
-        Vec<&StoredUsageRecord>,
-    )> = Vec::new();
-    let mut group_index: std::collections::HashMap<String, usize> =
-        std::collections::HashMap::new();
-    let mut unknown_record_count: i64 = 0;
-    for record in &records {
-        if record.input.status == "unknown"
-            || record.output.status == "unknown"
-            || record.cost.status == "unknown"
-        {
-            unknown_record_count += 1;
+    let rt_bg = Arc::clone(&rt);
+    let body = tokio::task::spawn_blocking(move || -> Result<Value, ContractError> {
+        let group_by = input
+            .get("groupBy")
+            .and_then(Value::as_str)
+            .unwrap_or("session")
+            .to_owned();
+        if !matches!(group_by.as_str(), "project" | "session" | "model" | "day") {
+            return Err(ContractError::new(
+                CODE_INVALID_ARGUMENT,
+                format!("groupBy must be one of project|session|model|day; got `{group_by}`"),
+                RetrySpec::never(),
+                EffectStatus::NotApplied,
+            ));
         }
-        let (key, scope, model) = match group_by {
-            "session" => {
-                let scope = record_scope(record);
-                let key = format!(
-                    "scope:{}",
-                    serde_json::to_string(&scope.to_scope_json()).unwrap_or_default()
-                );
-                (key, scope, None)
+
+        let query = UsageQuery::parse_filters(&rt_bg, &input)?;
+        let conn = rt_bg.store().conn.lock().map_err(|_| usage_mutex_err())?;
+        let records = query.query_matching_records(&conn)?;
+        drop(conn);
+        let query_scope = query.scope.clone();
+
+        #[allow(clippy::type_complexity)]
+        let mut groups: Vec<(
+            GroupKey,
+            UsageScope,
+            Option<(String, String)>,
+            Vec<&StoredUsageRecord>,
+        )> = Vec::new();
+        let mut group_index: std::collections::HashMap<GroupKey, usize> =
+            std::collections::HashMap::new();
+        let mut unknown_record_count: i64 = 0;
+        for record in &records {
+            if is_metric_unknown(&record.input)
+                || is_metric_unknown(&record.output)
+                || is_metric_unknown(&record.cost)
+            {
+                unknown_record_count += 1;
             }
-            "project" => {
-                let scope = match &record.project_id {
-                    Some(project_id) => UsageScope::Project {
-                        project_id: project_id.clone(),
+            let (key, scope, model) = match group_by.as_str() {
+                "session" => {
+                    let scope = record_scope(record);
+                    let key = GroupKey::Scope(
+                        serde_json::to_string(&scope.to_scope_json()).unwrap_or_default(),
+                    );
+                    (key, scope, None)
+                }
+                "project" => {
+                    let scope = match &record.project_id {
+                        Some(project_id) => UsageScope::Project {
+                            project_id: project_id.clone(),
+                        },
+                        None => UsageScope::Instance,
+                    };
+                    let key = GroupKey::Scope(
+                        serde_json::to_string(&scope.to_scope_json()).unwrap_or_default(),
+                    );
+                    (key, scope, None)
+                }
+                "model" => {
+                    let model = record
+                        .provider_id
+                        .as_deref()
+                        .zip(record.model_id.as_deref())
+                        .map(|(p, m)| (p.to_owned(), m.to_owned()));
+                    let key = GroupKey::Model(record.provider_id.clone(), record.model_id.clone());
+                    (key, query_scope.clone(), model)
+                }
+                _ => {
+                    // UTC calendar day bucket (handles arbitrary source offsets).
+                    let day = DateTime::parse_from_rfc3339(&record.occurred_at)
+                        .map(|dt| dt.with_timezone(&Utc).format("%Y-%m-%d").to_string())
+                        .unwrap_or_else(|_| "unknown".to_owned());
+                    let model = record
+                        .provider_id
+                        .as_deref()
+                        .zip(record.model_id.as_deref())
+                        .map(|(p, m)| (p.to_owned(), m.to_owned()));
+                    let key = GroupKey::DayModel(
+                        day,
+                        record.provider_id.clone(),
+                        record.model_id.clone(),
+                    );
+                    (key, query_scope.clone(), model)
+                }
+            };
+            match group_index.get(&key) {
+                Some(index) => groups[*index].3.push(record),
+                None => {
+                    group_index.insert(key.clone(), groups.len());
+                    groups.push((key, scope, model, vec![record]));
+                }
+            }
+        }
+
+        groups.sort_by(|a, b| a.0.cmp(&b.0));
+        let rows: Vec<Value> = groups
+            .into_iter()
+            .map(|(_, scope, model, members)| {
+                json!({
+                    "scope": scope.to_scope_json(),
+                    "model": match &model {
+                        Some((provider_id, model_id)) => {
+                            json!({"providerId": provider_id, "modelId": model_id})
+                        }
+                        None => Value::Null,
                     },
-                    None => UsageScope::Instance,
-                };
-                let key = format!(
-                    "scope:{}",
-                    serde_json::to_string(&scope.to_scope_json()).unwrap_or_default()
-                );
-                (key, scope, None)
-            }
-            "model" => {
-                let model = record
-                    .provider_id
-                    .as_deref()
-                    .zip(record.model_id.as_deref())
-                    .map(|(p, m)| (p.to_owned(), m.to_owned()));
-                let key = format!(
-                    "model:{}/{}",
-                    record.provider_id.as_deref().unwrap_or("-"),
-                    record.model_id.as_deref().unwrap_or("-")
-                );
-                (key, query_scope.clone(), model)
-            }
-            // "day": bucket by UTC calendar day *and* model; the row scope
-            // is the query scope (see the module docs for the shape gap).
-            _ => {
-                let day = record.occurred_at.get(..10).unwrap_or("unknown").to_owned();
-                let model = record
-                    .provider_id
-                    .as_deref()
-                    .zip(record.model_id.as_deref())
-                    .map(|(p, m)| (p.to_owned(), m.to_owned()));
-                let key = format!(
-                    "day:{day}:{}/{}",
-                    record.provider_id.as_deref().unwrap_or("-"),
-                    record.model_id.as_deref().unwrap_or("-")
-                );
-                (key, query_scope.clone(), model)
-            }
-        };
-        match group_index.get(&key) {
-            Some(index) => groups[*index].3.push(record),
-            None => {
-                group_index.insert(key.clone(), groups.len());
-                groups.push((key, scope, model, vec![record]));
-            }
-        }
-    }
-
-    // Deterministic row order: by group key (day/model keys sort
-    // chronologically/lexicographically; scope keys by their JSON form).
-    groups.sort_by(|a, b| a.0.cmp(&b.0));
-    let rows: Vec<Value> = groups
-        .into_iter()
-        .map(|(_, scope, model, members)| {
-            json!({
-                "scope": scope.to_scope_json(),
-                "model": match &model {
-                    Some((provider_id, model_id)) => json!({"providerId": provider_id, "modelId": model_id}),
-                    None => Value::Null,
-                },
-                "inputTokens": aggregate_metric(members.iter().map(|r| &r.input), TOKEN_UNIT),
-                "outputTokens": aggregate_metric(members.iter().map(|r| &r.output), TOKEN_UNIT),
-                "cost": aggregate_metric(members.iter().map(|r| &r.cost), MIXED_MARKER),
+                    "inputTokens": aggregate_metric(members.iter().map(|r| &r.input), TOKEN_UNIT),
+                    "outputTokens": aggregate_metric(members.iter().map(|r| &r.output), TOKEN_UNIT),
+                    "cost": aggregate_metric(members.iter().map(|r| &r.cost), MIXED_MARKER),
+                })
             })
-        })
-        .collect();
+            .collect();
 
-    Ok((
-        ResponseOutcome::Succeeded,
-        json!({
+        Ok(json!({
             "rows": rows,
             "unknownRecordCount": unknown_record_count,
             "asOf": Utc::now().to_rfc3339(),
-        }),
-    ))
+        }))
+    })
+    .await
+    .map_err(|_| DispatchError::from(usage_mutex_err()))?
+    .map_err(DispatchError::from)?;
+    Ok((ResponseOutcome::Succeeded, body))
 }
 
 // ---------------------------------------------------------------------------
@@ -1309,5 +1470,162 @@ mod tests {
         assert_eq!(second["items"].as_array().map(Vec::len), Some(1));
         assert_eq!(second["complete"], true);
         assert_eq!(second["pageInfo"]["nextCursor"], Value::Null);
+    }
+
+    #[tokio::test]
+    async fn usage_summary_handles_overflow_missing_value_utc_day_and_slash_model_ids() {
+        let (_tmp, rt, iid) = fresh_home("usage-fixes");
+
+        // 1. Two OpenRouter-style slash model IDs that would collide under string `{p}/{m}`.
+        rt.store()
+            .record_usage(UsageRecordIn::actual_tokens(
+                "2026-11-01T23:30:00-05:00".to_owned(), // UTC = 2026-11-02T04:30:00Z
+                UsageScope::Instance,
+                Some(("openrouter".to_owned(), "anthropic/claude".to_owned())),
+                10.0,
+                5.0,
+                Some(0.5),
+                "USD",
+                "provider_reported",
+            ))
+            .unwrap();
+        rt.store()
+            .record_usage(UsageRecordIn::actual_tokens(
+                "2026-11-01T12:00:00+00:00".to_owned(), // UTC = 2026-11-01
+                UsageScope::Instance,
+                Some(("openrouter/anthropic".to_owned(), "claude".to_owned())),
+                20.0,
+                8.0,
+                Some(1.0),
+                "USD",
+                "provider_reported",
+            ))
+            .unwrap();
+
+        let (_, by_model) = rt
+            .dispatch(
+                "usage.summary",
+                json!({"instanceId": iid, "scope": {"kind": "instance"}, "groupBy": "model"}),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let rows = by_model["rows"].as_array().unwrap();
+        assert_eq!(rows.len(), 2, "slash model IDs must not collide: {rows:?}");
+
+        let (_, by_day) = rt
+            .dispatch(
+                "usage.summary",
+                json!({
+                    "instanceId": iid,
+                    "scope": {"kind": "instance"},
+                    "groupBy": "day",
+                    "from": "2026-11-02T00:00:00Z",
+                    "to": "2026-11-02T23:59:59Z"
+                }),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let day_rows = by_day["rows"].as_array().unwrap();
+        assert_eq!(
+            day_rows.len(),
+            1,
+            "record at 2026-11-01T23:30:00-05:00 belongs to 2026-11-02 UTC: {day_rows:?}"
+        );
+        assert_eq!(day_rows[0]["inputTokens"]["value"], 10.0);
+
+        // 2. Missing value with non-unknown status & f64 overflow must degrade cleanly to unknown/null.
+        rt.store()
+            .record_usage(UsageRecordIn {
+                occurred_at: "2026-11-03T10:00:00Z".to_owned(),
+                scope: UsageScope::Instance,
+                model: Some(("prov-ov".to_owned(), "m-ov".to_owned())),
+                input: Metric {
+                    value: None,
+                    status: "actual".to_owned(),
+                    unit: TOKEN_UNIT.to_owned(),
+                    source: "provider_reported".to_owned(),
+                },
+                output: Metric {
+                    value: Some(f64::MAX),
+                    status: "actual".to_owned(),
+                    unit: TOKEN_UNIT.to_owned(),
+                    source: "provider_reported".to_owned(),
+                },
+                cost: Metric {
+                    value: Some(1.0),
+                    status: "actual".to_owned(),
+                    unit: "USD".to_owned(),
+                    source: "provider_reported".to_owned(),
+                },
+            })
+            .unwrap();
+        rt.store()
+            .record_usage(UsageRecordIn::actual_tokens(
+                "2026-11-03T11:00:00Z".to_owned(),
+                UsageScope::Instance,
+                Some(("prov-ov".to_owned(), "m-ov".to_owned())),
+                5.0,
+                f64::MAX,
+                Some(2.0),
+                "USD",
+                "provider_reported",
+            ))
+            .unwrap();
+
+        let (_, ov_summary) = rt
+            .dispatch(
+                "usage.summary",
+                json!({
+                    "instanceId": iid,
+                    "scope": {"kind": "instance"},
+                    "model": {"providerId": "prov-ov", "modelId": "m-ov"},
+                    "groupBy": "model"
+                }),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        OperationRegistry::global()
+            .validate_result("usage.summary", &ov_summary)
+            .unwrap();
+        let row = &ov_summary["rows"][0];
+        assert_eq!(row["inputTokens"]["status"], "unknown");
+        assert_eq!(row["inputTokens"]["value"], Value::Null);
+        assert_eq!(row["outputTokens"]["status"], "unknown");
+        assert_eq!(row["outputTokens"]["value"], Value::Null);
+        assert_eq!(ov_summary["unknownRecordCount"], 1);
+
+        // 3. Unparseable occurred_at in SQL must not bypass `from`/`to` time bounds.
+        {
+            let conn = rt.store().conn.lock().unwrap();
+            conn.execute(
+                "INSERT INTO v1_usage_records (record_id, occurred_at, project_id, session_id, provider_id, model_id,
+                    input_value, input_status, input_source, output_value, output_status, output_source,
+                    cost_value, cost_status, cost_source, cost_unit, created_at)
+                 VALUES ('bad-ts', 'not-a-timestamp', NULL, NULL, NULL, NULL, 99.0, 'actual', 's', 1.0, 'actual', 's', 1.0, 'actual', 's', 'USD', '2026-11-01T00:00:00Z')",
+                [],
+            )
+            .unwrap();
+        }
+        let (_, bounded) = rt
+            .dispatch(
+                "usage.snapshot",
+                json!({
+                    "instanceId": iid,
+                    "scope": {"kind": "instance"},
+                    "from": "2020-01-01T00:00:00Z",
+                    "to": "2030-01-01T00:00:00Z"
+                }),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(bounded["items"].as_array().map(Vec::len), Some(4));
     }
 }

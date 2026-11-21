@@ -43,10 +43,10 @@ use agentcpm_pd_protocol::contract::ResponseOutcome;
 use agentcpm_pd_protocol::envelope::compute_input_digest;
 use agentcpm_pd_protocol::errors::{
     CODE_CURSOR_EXPIRED, CODE_IDEMPOTENCY_CONFLICT, CODE_INVALID_ARGUMENT, CODE_REVISION_CONFLICT,
-    CODE_SNAPSHOT_CHANGED, CODE_UNAVAILABLE, ContractError, EffectStatus, RetrySpec,
+    CODE_SNAPSHOT_CHANGED, CODE_UNAVAILABLE, ContractError, EffectStatus, RetryMode, RetrySpec,
 };
 use chrono::Utc;
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
@@ -54,6 +54,8 @@ use crate::public_v1::domains::DomainRegistry;
 use crate::public_v1::domains::operations_ops::LongOperationOutcome;
 use crate::public_v1::runtime::{DispatchError, PublicV1Runtime};
 use crate::public_v1::store::{V1Store, format_cursor, now_rfc3339};
+
+const OPERATION_EVENT_SCHEMA: &str = "agentcpm-pd.operation.event/1";
 
 const METHOD_ID_APPLY: &str = "model_references.apply";
 
@@ -249,75 +251,91 @@ fn matches_target(reference: &ReferenceEntry, provider_id: &str, model_id: Optio
 // model_references.inspect
 // ---------------------------------------------------------------------------
 
+fn model_ref_mutex_err() -> ContractError {
+    ContractError::new(
+        CODE_UNAVAILABLE,
+        "sqlite store mutex poisoned",
+        RetrySpec::backoff_read(Some(250)),
+        EffectStatus::Unknown,
+    )
+}
+
+async fn run_blocking<F>(rt: &Arc<PublicV1Runtime>, f: F) -> Result<Value, DispatchError>
+where
+    F: FnOnce(&V1Store) -> Result<Value, ContractError> + Send + 'static,
+{
+    let store = Arc::clone(rt.store());
+    let res = tokio::task::spawn_blocking(move || f(&store))
+        .await
+        .map_err(|_| DispatchError::from(model_ref_mutex_err()))?;
+    res.map_err(DispatchError::from)
+}
+
 async fn model_references_inspect(
     rt: Arc<PublicV1Runtime>,
     input: Value,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
-    let (provider_id, model_id) = parse_target(&input);
-    if provider_id.is_empty() {
-        return Err(invalid("providerId is required").into());
-    }
-    let page = input.get("page");
-    let limit = page
-        .and_then(Value::as_object)
-        .and_then(|p| p.get("limit"))
-        .and_then(Value::as_u64)
-        .unwrap_or(100)
-        .clamp(1, 500) as usize;
+    let body = run_blocking(&rt, move |store| {
+        let (provider_id, model_id) = parse_target(&input);
+        if provider_id.is_empty() {
+            return Err(invalid("providerId is required"));
+        }
+        let page = input.get("page");
+        let limit = page
+            .and_then(Value::as_object)
+            .and_then(|p| p.get("limit"))
+            .and_then(Value::as_u64)
+            .unwrap_or(100)
+            .clamp(1, 500) as usize;
 
-    let conn = rt.store().conn.lock().expect("sqlite mutex");
-    let references = collect_references(&conn)?;
-    let set_revision = reference_set_revision(&references);
-    let matched: Vec<ReferenceEntry> = references
-        .into_iter()
-        .filter(|r| matches_target(r, &provider_id, model_id.as_deref()))
-        .collect();
-    let digest = view_digest(&matched);
+        let conn = store.conn.lock().map_err(|_| model_ref_mutex_err())?;
+        let references = collect_references(&conn)?;
+        let set_revision = reference_set_revision(&references);
+        let matched: Vec<ReferenceEntry> = references
+            .into_iter()
+            .filter(|r| matches_target(r, &provider_id, model_id.as_deref()))
+            .collect();
+        let digest = view_digest(&matched);
 
-    let offset = match page.and_then(|p| p.get("cursor")).and_then(Value::as_str) {
-        None => 0usize,
-        Some(raw) => match parse_view_cursor(raw) {
-            Some((pinned, off)) => {
-                if pinned != digest {
+        let offset = match page.and_then(|p| p.get("cursor")).and_then(Value::as_str) {
+            None => 0usize,
+            Some(raw) => match parse_view_cursor(raw) {
+                Some((pinned, off)) => {
+                    if pinned != digest {
+                        return Err(ContractError::new(
+                            CODE_SNAPSHOT_CHANGED,
+                            "the reference listing changed while paging; restart the query from the first page",
+                            RetrySpec::after_reconcile(),
+                            EffectStatus::NotApplied,
+                        ));
+                    }
+                    off
+                }
+                None => {
                     return Err(ContractError::new(
-                        CODE_SNAPSHOT_CHANGED,
-                        "the reference listing changed while paging; restart the query from the first page",
+                        CODE_CURSOR_EXPIRED,
+                        format!("invalid pagination cursor `{raw}`"),
                         RetrySpec::after_reconcile(),
                         EffectStatus::NotApplied,
-                    )
-                    .into());
+                    ));
                 }
-                off
-            }
-            None => {
-                return Err(ContractError::new(
-                    CODE_CURSOR_EXPIRED,
-                    format!("invalid pagination cursor `{raw}`"),
-                    RetrySpec::after_reconcile(),
-                    EffectStatus::NotApplied,
-                )
-                .into());
-            }
-        },
-    };
-    if offset > matched.len() {
-        return Err(ContractError::new(
-            CODE_CURSOR_EXPIRED,
-            "pagination cursor beyond the end of the listing",
-            RetrySpec::after_reconcile(),
-            EffectStatus::NotApplied,
-        )
-        .into());
-    }
-    let end = (offset + limit).min(matched.len());
-    let complete = end >= matched.len();
-    let items: Vec<Value> = matched[offset..end]
-        .iter()
-        .map(ReferenceEntry::to_contract_json)
-        .collect();
-    Ok((
-        ResponseOutcome::Succeeded,
-        json!({
+            },
+        };
+        if offset > matched.len() {
+            return Err(ContractError::new(
+                CODE_CURSOR_EXPIRED,
+                "pagination cursor beyond the end of the listing",
+                RetrySpec::after_reconcile(),
+                EffectStatus::NotApplied,
+            ));
+        }
+        let end = (offset + limit).min(matched.len());
+        let complete = end >= matched.len();
+        let items: Vec<Value> = matched[offset..end]
+            .iter()
+            .map(ReferenceEntry::to_contract_json)
+            .collect();
+        Ok(json!({
             "references": items,
             "pageInfo": {
                 "snapshotRevision": digest,
@@ -325,8 +343,10 @@ async fn model_references_inspect(
                 "complete": complete,
             },
             "referenceSetRevision": set_revision,
-        }),
-    ))
+        }))
+    })
+    .await?;
+    Ok((ResponseOutcome::Succeeded, body))
 }
 
 // ---------------------------------------------------------------------------
@@ -534,126 +554,26 @@ async fn model_references_plan(
     rt: Arc<PublicV1Runtime>,
     input: Value,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
-    let (target_provider, target_model) = parse_target(&input);
-    if target_provider.is_empty() {
-        return Err(invalid("providerId is required").into());
-    }
-    let Some(replacement) = parse_model_ref(&input["replacement"]) else {
-        return Err(invalid("replacement.providerId and replacement.modelId are required").into());
-    };
-    let expected_set_revision = input["expectedReferenceSetRevision"]
-        .as_str()
-        .unwrap_or_default()
-        .to_owned();
-    let remove_source = input
-        .get("removeSource")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
+    let body = run_blocking(&rt, move |store| {
+        let (target_provider, target_model) = parse_target(&input);
+        if target_provider.is_empty() {
+            return Err(invalid("providerId is required"));
+        }
+        let Some(replacement) = parse_model_ref(&input["replacement"]) else {
+            return Err(invalid(
+                "replacement.providerId and replacement.modelId are required",
+            ));
+        };
+        let expected_set_revision = input["expectedReferenceSetRevision"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
+        let remove_source = input
+            .get("removeSource")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
 
-    let conn = rt.store().conn.lock().expect("sqlite mutex");
-    let references = collect_references(&conn)?;
-    let current = reference_set_revision(&references);
-    if current != expected_set_revision {
-        return Err(ContractError::new(
-            CODE_REVISION_CONFLICT,
-            format!(
-                "expectedReferenceSetRevision `{expected_set_revision}` does not match `{current}`"
-            ),
-            RetrySpec::after_reconcile(),
-            EffectStatus::NotApplied,
-        )
-        .into());
-    }
-    // 无效替代不产生可提交计划: MODEL_UNAVAILABLE (plan is read-only, the
-    // digest below would never be committable).
-    validate_replacement(
-        &conn,
-        &target_provider,
-        target_model.as_deref(),
-        &replacement,
-        remove_source,
-    )?;
-    let plan = build_plan(&conn, &target_provider, target_model.as_deref())?;
-    let digest = plan_digest(
-        &target_provider,
-        target_model.as_deref(),
-        &replacement,
-        remove_source,
-        &plan,
-        &conn,
-    )?;
-
-    let mut issues = Vec::new();
-    for run_id in &plan.active_bindings {
-        issues.push(json!({
-            "code": "ACTIVE_BINDINGS",
-            "field": "runs",
-            "message": format!(
-                "run `{run_id}` is in flight and bound to the target; apply is refused until it reaches a terminal state (在途绑定不热换)"
-            ),
-        }));
-    }
-    for run_id in &plan.historical_runs {
-        issues.push(json!({
-            "code": "HISTORICAL_RUN_REFERENCE",
-            "field": "runs",
-            "message": format!(
-                "run `{run_id}` keeps its recorded model as history; it is not rewritten"
-            ),
-        }));
-    }
-    let changes: Vec<Value> = plan.changes.iter().map(|c| c.to_contract_json()).collect();
-    Ok((
-        ResponseOutcome::Succeeded,
-        json!({
-            "planDigest": digest,
-            "changes": changes,
-            "referenceSetRevision": current,
-            "replacement": {"providerId": replacement.0, "modelId": replacement.1},
-            "issues": issues,
-        }),
-    ))
-}
-
-// ---------------------------------------------------------------------------
-// model_references.apply
-// ---------------------------------------------------------------------------
-
-async fn model_references_apply(
-    rt: Arc<PublicV1Runtime>,
-    input: Value,
-    idempotency_key: Option<String>,
-) -> Result<(ResponseOutcome, Value), DispatchError> {
-    let store = rt.store().clone();
-    let (target_provider, target_model) = parse_target(&input);
-    if target_provider.is_empty() {
-        return Err(invalid("providerId is required").into());
-    }
-    let Some(replacement) = parse_model_ref(&input["replacement"]) else {
-        return Err(invalid("replacement.providerId and replacement.modelId are required").into());
-    };
-    let expected_set_revision = input["expectedReferenceSetRevision"]
-        .as_str()
-        .unwrap_or_default()
-        .to_owned();
-    let submitted_digest = input["planDigest"].as_str().unwrap_or_default().to_owned();
-    let remove_source = input
-        .get("removeSource")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-
-    // 幂等 intake.
-    if let Some(key) = idempotency_key.as_deref()
-        && let Some(replay) = replay_apply_receipt(&store, key, &input)?
-    {
-        return Ok((ResponseOutcome::Accepted, replay));
-    }
-
-    // Pre-accept re-validation: revision, replacement, digest, in-flight
-    // bindings. All zero-side-effect; a rejection is recorded under the
-    // caller's key so a retry of the same intent replays it.
-    let precheck = (|| -> Result<(), ContractError> {
-        let conn = store.conn.lock().expect("sqlite mutex");
+        let conn = store.conn.lock().map_err(|_| model_ref_mutex_err())?;
         let references = collect_references(&conn)?;
         let current = reference_set_revision(&references);
         if current != expected_set_revision {
@@ -682,86 +602,248 @@ async fn model_references_apply(
             &plan,
             &conn,
         )?;
-        if digest != submitted_digest {
-            return Err(ContractError::new(
-                CODE_REVISION_CONFLICT,
-                format!(
-                    "planDigest `{submitted_digest}` does not match the current plan `{digest}`; the reference set or catalog changed since planning"
+
+        let mut issues = Vec::new();
+        for run_id in &plan.active_bindings {
+            issues.push(json!({
+                "code": "ACTIVE_BINDINGS",
+                "field": "runs",
+                "message": format!(
+                    "run `{run_id}` is in flight and bound to the target; apply is refused until it reaches a terminal state (在途绑定不热换)"
                 ),
-                RetrySpec::after_reconcile(),
-                EffectStatus::NotApplied,
-            ));
+            }));
         }
-        if !plan.active_bindings.is_empty() {
-            return Err(ContractError::new(
-                CODE_ACTIVE_BINDINGS,
-                format!(
-                    "runs still bound to the target are in flight (`{}`); let them finish or cancel them first (在途绑定不热换)",
-                    plan.active_bindings.join("`, `")
+        for run_id in &plan.historical_runs {
+            issues.push(json!({
+                "code": "HISTORICAL_RUN_REFERENCE",
+                "field": "runs",
+                "message": format!(
+                    "run `{run_id}` keeps its recorded model as history; it is not rewritten"
                 ),
-                RetrySpec::after_reconcile(),
-                EffectStatus::NotApplied,
-            ));
+            }));
         }
-        Ok(())
-    })();
-    if let Err(err) = precheck {
-        if let Some(key) = idempotency_key.as_deref() {
-            record_apply_rejection(&store, key, &input, &err.code);
+        let changes: Vec<Value> = plan.changes.iter().map(|c| c.to_contract_json()).collect();
+        Ok(json!({
+            "planDigest": digest,
+            "changes": changes,
+            "referenceSetRevision": current,
+            "replacement": {"providerId": replacement.0, "modelId": replacement.1},
+            "issues": issues,
+        }))
+    })
+    .await?;
+    Ok((ResponseOutcome::Succeeded, body))
+}
+
+// ---------------------------------------------------------------------------
+// model_references.apply
+// ---------------------------------------------------------------------------
+
+fn insert_long_operation_in_tx(
+    tx: &Connection,
+    store: &V1Store,
+    operation_type: &str,
+) -> Result<(String, String), ContractError> {
+    let operation_id = store.next_id();
+    let rev = next_rev_in_tx(tx)?;
+    let now = now_rfc3339();
+    tx.execute(
+        "INSERT INTO operations (operation_id, operation_type, scope_kind, project_id, session_id,
+            state, revision, cancel_requested, cancellable, effect_status, progress_json,
+            created_at, updated_at)
+         VALUES (?1, ?2, 'instance', NULL, NULL, 'queued', ?3, 0, 0, 'known', '[]', ?4, ?4)",
+        params![operation_id, operation_type, rev, now],
+    )
+    .map_err(sql_err)?;
+    let placeholder = format!("tmp-op-{operation_id}-q");
+    let payload = serde_json::to_string(&json!({
+        "operationId": operation_id,
+        "operationType": operation_type,
+    }))
+    .unwrap_or_else(|_| "{}".into());
+    tx.execute(
+        "INSERT INTO events (cursor, resource_id, session_id, event_type, schema_id, payload_json, data_json, occurred_at)
+         VALUES (?1, ?2, '', 'operation.queued', ?3, ?4, ?4, ?5)",
+        params![placeholder, operation_id, OPERATION_EVENT_SCHEMA, payload, now],
+    )
+    .map_err(sql_err)?;
+    let seq = tx.last_insert_rowid();
+    tx.execute(
+        "UPDATE events SET cursor = ?1 WHERE seq = ?2",
+        params![format_cursor(seq), seq],
+    )
+    .map_err(sql_err)?;
+    Ok((operation_id, rev))
+}
+
+async fn model_references_apply(
+    rt: Arc<PublicV1Runtime>,
+    input: Value,
+    idempotency_key: Option<String>,
+) -> Result<(ResponseOutcome, Value), DispatchError> {
+    let store = rt.store().clone();
+    let (target_provider, target_model) = parse_target(&input);
+    if target_provider.is_empty() {
+        return Err(invalid("providerId is required").into());
+    }
+    let Some(replacement) = parse_model_ref(&input["replacement"]) else {
+        return Err(invalid("replacement.providerId and replacement.modelId are required").into());
+    };
+    let expected_set_revision = input["expectedReferenceSetRevision"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
+    let submitted_digest = input["planDigest"].as_str().unwrap_or_default().to_owned();
+    let remove_source = input
+        .get("removeSource")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let digest = compute_input_digest(METHOD_ID_APPLY, &input);
+
+    let store_bg = store.clone();
+    let key_bg = idempotency_key.clone();
+    let tp_bg = target_provider.clone();
+    let tm_bg = target_model.clone();
+    let repl_bg = replacement.clone();
+    let exp_rev_bg = expected_set_revision.clone();
+    let sub_dig_bg = submitted_digest.clone();
+
+    let (replayed, operation_id, receipt) = tokio::task::spawn_blocking(move || -> Result<(bool, String, Value), ContractError> {
+        let mut conn = store_bg.conn.lock().map_err(|_| model_ref_mutex_err())?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sql_err)?;
+        if let Some(key) = key_bg.as_deref()
+            && let Some(replay) = check_apply_idempotency_in_tx(&tx, key, &digest)?
+        {
+            tx.commit().map_err(sql_err)?;
+            return Ok((true, String::new(), replay));
         }
-        return Err(err.into());
+
+        let precheck = (|| -> Result<(), ContractError> {
+            let references = collect_references(&tx)?;
+            let current = reference_set_revision(&references);
+            if current != exp_rev_bg {
+                return Err(ContractError::new(
+                    CODE_REVISION_CONFLICT,
+                    format!(
+                        "expectedReferenceSetRevision `{exp_rev_bg}` does not match `{current}`"
+                    ),
+                    RetrySpec::after_reconcile(),
+                    EffectStatus::NotApplied,
+                ));
+            }
+            validate_replacement(
+                &tx,
+                &tp_bg,
+                tm_bg.as_deref(),
+                &repl_bg,
+                remove_source,
+            )?;
+            let plan = build_plan(&tx, &tp_bg, tm_bg.as_deref())?;
+            let computed = plan_digest(
+                &tp_bg,
+                tm_bg.as_deref(),
+                &repl_bg,
+                remove_source,
+                &plan,
+                &tx,
+            )?;
+            if computed != sub_dig_bg {
+                return Err(ContractError::new(
+                    CODE_REVISION_CONFLICT,
+                    format!(
+                        "planDigest `{sub_dig_bg}` does not match the current plan `{computed}`; the reference set or catalog changed since planning"
+                    ),
+                    RetrySpec::after_reconcile(),
+                    EffectStatus::NotApplied,
+                ));
+            }
+            if !plan.active_bindings.is_empty() {
+                return Err(ContractError::new(
+                    CODE_ACTIVE_BINDINGS,
+                    format!(
+                        "runs still bound to the target are in flight (`{}`); let them finish or cancel them first (在途绑定不热换)",
+                        plan.active_bindings.join("`, `")
+                    ),
+                    RetrySpec::after_reconcile(),
+                    EffectStatus::NotApplied,
+                ));
+            }
+            Ok(())
+        })();
+        if let Err(err) = precheck {
+            // Only definitive rejections (`RetryMode::Never`) poison the key;
+            // retryable states like `ACTIVE_BINDINGS` or `REVISION_CONFLICT` stay replayable.
+            if err.retry.mode == RetryMode::Never
+                && let Some(key) = key_bg.as_deref()
+            {
+                record_apply_rejection_in_tx(&tx, key, &digest, &err.code)?;
+                tx.commit().map_err(sql_err)?;
+            }
+            return Err(err);
+        }
+
+        let (operation_id, accepted_revision) =
+            insert_long_operation_in_tx(&tx, &store_bg, METHOD_ID_APPLY)?;
+        let receipt = json!({
+            "kind": "operation",
+            "operationId": operation_id,
+            "durable": true,
+            "acceptedRevision": accepted_revision,
+            "deduplicated": false,
+            "state": "queued",
+        });
+        if let Some(key) = key_bg.as_deref() {
+            record_apply_acceptance_in_tx(
+                &tx,
+                key,
+                &digest,
+                &json!({"kind": "operation", "operationId": operation_id}),
+                &receipt,
+            )?;
+        }
+        tx.commit().map_err(sql_err)?;
+        Ok((false, operation_id, receipt))
+    })
+    .await
+    .map_err(|_| DispatchError::from(model_ref_mutex_err()))?
+    .map_err(DispatchError::from)?;
+
+    if replayed {
+        return Ok((ResponseOutcome::Accepted, receipt));
     }
 
-    // 受理：长操作缝登记。The transaction below is short and atomic, so the
-    // operation is not cancellable mid-flight.
-    let (operation_id, accepted_revision) =
-        store.begin_long_operation(METHOD_ID_APPLY, &json!({"kind": "instance"}), false)?;
-    let receipt = json!({
-        "kind": "operation",
-        "operationId": operation_id,
-        "durable": true,
-        "acceptedRevision": accepted_revision,
-        "deduplicated": false,
-        "state": "queued",
-    });
-    if let Some(key) = idempotency_key.as_deref()
-        && let Err(err) = record_apply_acceptance(
-            &store,
-            key,
-            &input,
-            &json!({"operationId": operation_id}),
-            &receipt,
-        )
-    {
-        let _ = store.finish_long_operation(
-            &operation_id,
-            LongOperationOutcome::Failed {
-                code: err.code.clone(),
-                message: err.message.clone(),
-            },
-        );
-        return Err(err.into());
-    }
     store.event_notifier().notify_waiters();
 
     // 驱动：单事务复验 + 全部写入（「任一冲突整体拒绝」「过期 revision 无部分写入」）。
     let driver_store = store.clone();
     let driver_key = idempotency_key.clone();
+    let op_id_driver = operation_id.clone();
     tokio::spawn(async move {
-        let _ = driver_store.mark_operation_running(&operation_id);
-        let outcome = execute_apply(
-            &driver_store,
-            &target_provider,
-            target_model.as_deref(),
-            &replacement,
-            remove_source,
-            &expected_set_revision,
-            &submitted_digest,
-        );
+        let _ = driver_store.mark_operation_running(&op_id_driver);
+        let outcome = tokio::task::spawn_blocking({
+            let s = driver_store.clone();
+            let op_id = op_id_driver.clone();
+            move || {
+                execute_apply(
+                    &s,
+                    &op_id,
+                    &target_provider,
+                    target_model.as_deref(),
+                    &replacement,
+                    remove_source,
+                    &expected_set_revision,
+                    &submitted_digest,
+                )
+            }
+        })
+        .await
+        .unwrap_or_else(|_| Err(model_ref_mutex_err()));
         match outcome {
             Ok(completion) => {
                 let _ = driver_store.finish_long_operation(
-                    &operation_id,
+                    &op_id_driver,
                     LongOperationOutcome::Succeeded {
                         result: completion,
                         result_schema_id: Some(format!(
@@ -773,7 +855,7 @@ async fn model_references_apply(
             }
             Err(err) => {
                 let _ = driver_store.finish_long_operation(
-                    &operation_id,
+                    &op_id_driver,
                     LongOperationOutcome::Failed {
                         code: err.code.clone(),
                         message: err.message.clone(),
@@ -792,6 +874,7 @@ async fn model_references_apply(
 #[allow(clippy::too_many_arguments)]
 fn execute_apply(
     store: &Arc<V1Store>,
+    operation_id: &str,
     target_provider: &str,
     target_model: Option<&str>,
     replacement: &(String, String),
@@ -799,8 +882,10 @@ fn execute_apply(
     expected_set_revision: &str,
     submitted_digest: &str,
 ) -> Result<Value, ContractError> {
-    let mut conn = store.conn.lock().expect("sqlite mutex");
-    let tx = conn.transaction().map_err(sql_err)?;
+    let mut conn = store.conn.lock().map_err(|_| model_ref_mutex_err())?;
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(sql_err)?;
 
     // 复验（事务内重做 precheck —— 受理与执行之间的任何变化都让整体回滚）.
     let references = collect_references(&tx)?;
@@ -864,6 +949,12 @@ fn execute_apply(
             )
             .optional()
             .map_err(sql_err)?;
+        let scope_val = serde_json::from_str::<Value>(scope_json.as_deref().unwrap_or("{}"))
+            .unwrap_or(Value::Null);
+        let event_session_id = scope_val
+            .get("sessionId")
+            .and_then(Value::as_str)
+            .unwrap_or("");
         let new_rev = next_rev_in_tx(&tx)?;
         tx.execute(
             "UPDATE v1_model_selections
@@ -881,13 +972,12 @@ fn execute_apply(
         append_selection_event_in_tx(
             &tx,
             &change.resource_id,
-            scope_json.as_deref().unwrap_or(""),
+            event_session_id,
             "modelSelection.changed",
             &json!({
-                "scope": serde_json::from_str::<Value>(scope_json.as_deref().unwrap_or("{}"))
-                    .unwrap_or(Value::Null),
+                "scope": scope_val,
                 "model": {"providerId": replacement.0, "modelId": replacement.1},
-                "operationId": "model_references.apply",
+                "operationId": operation_id,
             }),
         )?;
         updated.push(ReferenceEntry {
@@ -952,15 +1042,12 @@ fn execute_apply(
         ));
     }
 
+    let after = collect_references(&tx)?;
     tx.commit().map_err(sql_err)?;
     drop(conn);
     store.event_notifier().notify_waiters();
     store.state_notifier().notify_waiters();
 
-    let after = {
-        let conn = store.conn.lock().expect("sqlite mutex");
-        collect_references(&conn)?
-    };
     let updated_references: Vec<Value> = updated.iter().map(|r| r.to_contract_json()).collect();
     Ok(json!({
         "updatedReferences": updated_references,
@@ -1025,14 +1112,12 @@ fn append_selection_event_in_tx(
 // Idempotency (same table/shape as provider_test.rs / workspaces.rs)
 // ---------------------------------------------------------------------------
 
-fn replay_apply_receipt(
-    store: &V1Store,
+fn check_apply_idempotency_in_tx(
+    tx: &Connection,
     key: &str,
-    input: &Value,
+    digest: &str,
 ) -> Result<Option<Value>, ContractError> {
-    let digest = compute_input_digest(METHOD_ID_APPLY, input);
-    let conn = store.conn.lock().expect("sqlite mutex");
-    let existing: Option<(String, Option<String>, Option<String>)> = conn
+    let existing: Option<(String, Option<String>, Option<String>)> = tx
         .query_row(
             "SELECT input_digest, receipt_json, rejection_code
              FROM idempotency_records WHERE idempotency_key = ?1 AND method_id = ?2",
@@ -1075,19 +1160,17 @@ fn replay_apply_receipt(
     }
 }
 
-fn record_apply_acceptance(
-    store: &V1Store,
+fn record_apply_acceptance_in_tx(
+    tx: &Connection,
     key: &str,
-    input: &Value,
+    digest: &str,
     resource: &Value,
     receipt: &Value,
 ) -> Result<(), ContractError> {
-    let digest = compute_input_digest(METHOD_ID_APPLY, input);
     let now = now_rfc3339();
     let retained = (Utc::now() + chrono::Duration::days(7)).to_rfc3339();
-    let conn = store.conn.lock().expect("sqlite mutex");
-    conn.execute(
-        "INSERT OR IGNORE INTO idempotency_records (idempotency_key, method_id, input_digest, request_state, reason, resource_json, receipt_json, rejection_code, observed_at, retained_until, retry_disposition)
+    tx.execute(
+        "INSERT INTO idempotency_records (idempotency_key, method_id, input_digest, request_state, reason, resource_json, receipt_json, rejection_code, observed_at, retained_until, retry_disposition)
          VALUES (?1, ?2, ?3, 'accepted', 'receiptFound', ?4, ?5, NULL, ?6, ?7, 'doNotReplay')",
         params![
             key,
@@ -1103,18 +1186,21 @@ fn record_apply_acceptance(
     Ok(())
 }
 
-fn record_apply_rejection(store: &V1Store, key: &str, input: &Value, code: &str) {
-    let digest = compute_input_digest(METHOD_ID_APPLY, input);
+fn record_apply_rejection_in_tx(
+    tx: &Connection,
+    key: &str,
+    digest: &str,
+    code: &str,
+) -> Result<(), ContractError> {
     let now = now_rfc3339();
     let retained = (Utc::now() + chrono::Duration::days(7)).to_rfc3339();
-    let Ok(conn) = store.conn.lock() else {
-        return;
-    };
-    let _ = conn.execute(
+    tx.execute(
         "INSERT OR IGNORE INTO idempotency_records (idempotency_key, method_id, input_digest, request_state, reason, resource_json, receipt_json, rejection_code, observed_at, retained_until, retry_disposition)
          VALUES (?1, ?2, ?3, 'notAccepted', 'definitivelyRejected', NULL, NULL, ?4, ?5, ?6, 'correctRejectedInputWithNewKey')",
         params![key, METHOD_ID_APPLY, digest, code, now, retained],
-    );
+    )
+    .map_err(sql_err)?;
+    Ok(())
 }
 
 fn update_apply_receipt_state(store: &V1Store, key: Option<&str>, state: &str) {
@@ -1935,5 +2021,209 @@ mod tests {
             .await
             .expect("selection after");
         assert_eq!(selection["overrideModel"]["modelId"], "m-new");
+    }
+
+    #[tokio::test]
+    async fn apply_lookup_resource_has_kind_operation_session_event_uses_session_id_and_active_bindings_does_not_poison()
+     {
+        let (_tmp, rt, iid) = fresh_home("mr-fixes");
+        for (mid, name) in [("m-old", "Old"), ("m-new", "New")] {
+            rt.dispatch(
+                "provider.write",
+                json!({
+                    "instanceId": iid,
+                    "providerId": "prov-mr",
+                    "name": "MR Provider",
+                    "protocol": "openai",
+                    "endpoint": "https://api.example.com/v1",
+                }),
+                None,
+                None,
+            )
+            .await
+            .ok();
+            let _ = rt
+                .dispatch(
+                    "model.write",
+                    json!({
+                        "instanceId": iid,
+                        "model": {"providerId": "prov-mr", "modelId": mid},
+                        "name": name,
+                    }),
+                    None,
+                    None,
+                )
+                .await;
+        }
+        rt.store()
+            .register_project(&json!({
+                "projectId": "proj-mr",
+                "name": "mr",
+                "environmentId": "local",
+                "root": {"instanceId": iid, "rootId": "root-1", "relativePath": "ws"}
+            }))
+            .unwrap();
+        rt.store()
+            .create_session(&json!({"sessionId": "sess-mr", "projectId": "proj-mr"}))
+            .unwrap();
+
+        let scope = json!({"kind": "session", "projectId": "proj-mr", "sessionId": "sess-mr"});
+        let (_, sel_get) = rt
+            .dispatch(
+                "model_selection.get",
+                json!({"instanceId": iid, "scope": scope}),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let sel_rev = sel_get["revision"].as_str().unwrap().to_owned();
+        rt.dispatch(
+            "model_selection.set",
+            json!({
+                "instanceId": iid,
+                "scope": scope,
+                "expectedRevision": sel_rev,
+                "model": {"providerId": "prov-mr", "modelId": "m-old"},
+            }),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        // Seed an in-flight run bound to prov-mr/m-old so apply fails with ACTIVE_BINDINGS.
+        let (_, submitted) = rt
+            .dispatch(
+                "run.submit",
+                json!({
+                    "instanceId": iid,
+                    "sessionId": "sess-mr",
+                    "input": [{"kind": "text", "text": "hold [pd-driver:await_steer]"}],
+                    "model": {"providerId": "prov-mr", "modelId": "m-old"},
+                }),
+                Some("key-mr-run-1"),
+                None,
+            )
+            .await
+            .unwrap();
+        let run_id = submitted["runId"].as_str().unwrap().to_owned();
+        tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+
+        let (_, inspect) = rt
+            .dispatch(
+                "model_references.inspect",
+                json!({"instanceId": iid, "providerId": "prov-mr", "modelId": "m-old"}),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let set_rev = inspect["referenceSetRevision"].as_str().unwrap().to_owned();
+        let (_, plan) = rt
+            .dispatch(
+                "model_references.plan",
+                json!({
+                    "instanceId": iid,
+                    "providerId": "prov-mr",
+                    "modelId": "m-old",
+                    "replacement": {"providerId": "prov-mr", "modelId": "m-new"},
+                    "expectedReferenceSetRevision": set_rev,
+                    "removeSource": false,
+                }),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let digest = plan["planDigest"].as_str().unwrap().to_owned();
+
+        // Attempt apply while run is active -> ACTIVE_BINDINGS; must NOT poison key.
+        let apply_input = json!({
+            "instanceId": iid,
+            "providerId": "prov-mr",
+            "modelId": "m-old",
+            "replacement": {"providerId": "prov-mr", "modelId": "m-new"},
+            "expectedReferenceSetRevision": set_rev,
+            "planDigest": digest,
+            "removeSource": false,
+        });
+        let err = rt
+            .dispatch(
+                "model_references.apply",
+                apply_input.clone(),
+                Some("key-mr-active-retry"),
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(contract_code_of(&err), CODE_ACTIVE_BINDINGS);
+
+        // Cancel and await terminal state; replay with SAME idempotencyKey must now succeed!
+        rt.dispatch(
+            "run.cancel",
+            json!({"instanceId": iid, "runId": run_id}),
+            Some("key-mr-cancel-retry"),
+            None,
+        )
+        .await
+        .unwrap();
+        let cancelled = crate::public_v1::domains::automation::wait_run_terminal(
+            &rt,
+            &run_id,
+            std::time::Duration::from_secs(10),
+        )
+        .await
+        .unwrap();
+        assert!(cancelled.terminal);
+
+        let (outcome, receipt) = rt
+            .dispatch(
+                "model_references.apply",
+                apply_input,
+                Some("key-mr-active-retry"),
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(outcome, ResponseOutcome::Accepted);
+        let op_id = receipt["operationId"].as_str().unwrap().to_owned();
+        let operation = wait_apply_terminal(&rt, &op_id).await;
+        assert_eq!(operation["state"], "succeeded");
+
+        // requests.lookup must return resource.kind == "operation" + pass schema validation.
+        let (_, lookup) = rt
+            .dispatch(
+                "requests.lookup",
+                json!({
+                    "instanceId": iid,
+                    "methodId": "model_references.apply",
+                    "idempotencyKey": "key-mr-active-retry",
+                }),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        OperationRegistry::global()
+            .validate_result("requests.lookup", &lookup)
+            .unwrap();
+        assert_eq!(lookup["resource"]["kind"], "operation");
+        assert_eq!(lookup["resource"]["operationId"], op_id);
+
+        // modelSelection.changed event must carry clean session_id and real operationId.
+        let conn = rt.store().conn.lock().unwrap();
+        let (sess_col, payload_str): (String, String) = conn
+            .query_row(
+                "SELECT session_id, payload_json FROM events
+                 WHERE event_type = 'modelSelection.changed'
+                 ORDER BY seq DESC LIMIT 1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(sess_col, "sess-mr");
+        let payload: Value = serde_json::from_str(&payload_str).unwrap();
+        assert_eq!(payload["operationId"], op_id);
     }
 }

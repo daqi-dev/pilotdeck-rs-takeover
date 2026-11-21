@@ -343,6 +343,36 @@ impl DomainDb {
         })
     }
 
+    fn shared_store_revision(&self) -> Result<String, ContractError> {
+        self.with_conn("read store revision", |conn| {
+            let has_meta: bool = conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'meta')",
+                [],
+                |r| r.get(0),
+            )?;
+            if has_meta {
+                let current: Option<i64> = conn
+                    .query_row(
+                        "SELECT CAST(value AS INTEGER) FROM meta WHERE key = 'rev_counter'",
+                        [],
+                        |r| r.get(0),
+                    )
+                    .optional()?;
+                if let Some(n) = current {
+                    return Ok(format!("rev-{n:08}"));
+                }
+            }
+            let current: Option<String> = conn
+                .query_row(
+                    "SELECT value FROM v1_schedules_meta WHERE key = 'rev_counter'",
+                    [],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            Ok(current.unwrap_or_else(|| format!("{REV_PREFIX}00000000")))
+        })
+    }
+
     // ---- schedules -------------------------------------------------------
 
     fn schedule(&self, schedule_id: &str) -> Result<Option<ScheduleRow>, ContractError> {
@@ -941,7 +971,7 @@ pub(crate) fn accept_domain_operation(
         "kind": "operation",
         "operationId": operation_id,
         "durable": true,
-        "acceptedRevision": db.current_revision()?,
+        "acceptedRevision": db.shared_store_revision()?,
         "deduplicated": false,
         "state": "queued",
     });
@@ -1683,9 +1713,14 @@ fn parse_offset_cursor(cursor: Option<&str>, prefix: &str) -> Result<usize, Cont
     let Some(cursor) = cursor else {
         return Ok(0);
     };
-    cursor
-        .strip_prefix(prefix)
-        .and_then(|rest| rest.parse::<usize>().ok())
+    let rest = if prefix.ends_with('-') {
+        cursor.strip_prefix(prefix)
+    } else {
+        cursor
+            .strip_prefix(prefix)
+            .and_then(|s| s.strip_prefix('-'))
+    };
+    rest.and_then(|rest| rest.parse::<usize>().ok())
         .ok_or_else(|| invalid_arg(format!("malformed cursor `{cursor}`")))
 }
 

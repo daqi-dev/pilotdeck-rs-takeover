@@ -55,29 +55,42 @@
 //! issue 而不是静默通过；`timeoutMs` 按单次 HTTP 尝试计（基线
 //! `TIMEOUT_MS` 同为单探测粒度）。
 
-use std::sync::Arc;
+use std::future::Future;
+use std::net::{IpAddr, SocketAddr};
+use std::pin::Pin;
+use std::sync::{Arc, OnceLock};
+use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
 use agentcpm_pd_protocol::contract::ResponseOutcome;
 use agentcpm_pd_protocol::envelope::compute_input_digest;
 use agentcpm_pd_protocol::errors::{
     CODE_IDEMPOTENCY_CONFLICT, CODE_INVALID_ARGUMENT, CODE_REVISION_CONFLICT, CODE_UNAVAILABLE,
-    ContractError, EffectStatus, RetrySpec,
+    ContractError, EffectStatus, RetryMode, RetrySpec,
 };
 use bytes::Bytes;
 use chrono::Utc;
-use http_body_util::{BodyExt, Full};
+use http_body_util::{BodyExt, Full, Limited};
 use hyper::Request;
 use hyper_util::client::legacy::Client;
-use hyper_util::rt::TokioExecutor;
-use rusqlite::{Connection, OptionalExtension, params};
+use hyper_util::client::legacy::connect::{Connected, Connection as HyperConnection};
+use hyper_util::rt::{TokioExecutor, TokioIo};
+use regex::Regex;
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use tower_service::Service;
 
 use crate::public_v1::domains::DomainRegistry;
 use crate::public_v1::domains::operations_ops::LongOperationOutcome;
 use crate::public_v1::runtime::{DispatchError, PublicV1Runtime};
 use crate::public_v1::store::{V1Store, format_cursor, now_rfc3339};
+
+/// Maximum bytes buffered from an upstream probe response (64 KiB cap;
+/// matches `channels.rs`).
+const MAX_PROBE_RESPONSE_BYTES: usize = 65_536;
+const MIN_PROBE_TIMEOUT_MS: u64 = 1_000;
+const MAX_PROBE_TIMEOUT_MS: u64 = 120_000;
 
 /// Contract error codes these operations declare that no shared constant
 /// covers yet (all appear verbatim in the contract `errors` lists).
@@ -285,19 +298,16 @@ fn check_credential_reference(
 }
 
 // ---------------------------------------------------------------------------
-// Idempotency (accepted-receipt replay, same table/shape as run.submit,
-// uploads.complete and workspaces.prepare)
+// Idempotency + atomic BEGIN IMMEDIATE intake
 // ---------------------------------------------------------------------------
 
-fn replay_accepted_receipt(
-    store: &V1Store,
+fn check_idempotency_in_tx(
+    tx: &Connection,
     method_id: &str,
-    input: &Value,
+    digest: &str,
     key: &str,
 ) -> Result<Option<Value>, ContractError> {
-    let digest = compute_input_digest(method_id, input);
-    let conn = store.conn.lock().expect("sqlite mutex");
-    let existing: Option<(String, Option<String>, Option<String>)> = conn
+    let existing: Option<(String, Option<String>, Option<String>)> = tx
         .query_row(
             "SELECT input_digest, receipt_json, rejection_code
              FROM idempotency_records WHERE idempotency_key = ?1 AND method_id = ?2",
@@ -340,20 +350,18 @@ fn replay_accepted_receipt(
     }
 }
 
-fn record_acceptance(
-    store: &V1Store,
+fn record_acceptance_in_tx(
+    tx: &Connection,
     key: &str,
     method_id: &str,
-    input: &Value,
+    digest: &str,
     resource: &Value,
     receipt: &Value,
 ) -> Result<(), ContractError> {
-    let digest = compute_input_digest(method_id, input);
     let now = now_rfc3339();
     let retained = (Utc::now() + chrono::Duration::days(7)).to_rfc3339();
-    let conn = store.conn.lock().expect("sqlite mutex");
-    conn.execute(
-        "INSERT OR IGNORE INTO idempotency_records (idempotency_key, method_id, input_digest, request_state, reason, resource_json, receipt_json, rejection_code, observed_at, retained_until, retry_disposition)
+    tx.execute(
+        "INSERT INTO idempotency_records (idempotency_key, method_id, input_digest, request_state, reason, resource_json, receipt_json, rejection_code, observed_at, retained_until, retry_disposition)
          VALUES (?1, ?2, ?3, 'accepted', 'receiptFound', ?4, ?5, NULL, ?6, ?7, 'doNotReplay')",
         params![
             key,
@@ -369,18 +377,59 @@ fn record_acceptance(
     Ok(())
 }
 
-fn record_rejection(store: &V1Store, key: &str, method_id: &str, input: &Value, code: &str) {
-    let digest = compute_input_digest(method_id, input);
+fn record_rejection_in_tx(
+    tx: &Connection,
+    key: &str,
+    method_id: &str,
+    digest: &str,
+    code: &str,
+) -> Result<(), ContractError> {
     let now = now_rfc3339();
     let retained = (Utc::now() + chrono::Duration::days(7)).to_rfc3339();
-    let Ok(conn) = store.conn.lock() else {
-        return;
-    };
-    let _ = conn.execute(
+    tx.execute(
         "INSERT OR IGNORE INTO idempotency_records (idempotency_key, method_id, input_digest, request_state, reason, resource_json, receipt_json, rejection_code, observed_at, retained_until, retry_disposition)
          VALUES (?1, ?2, ?3, 'notAccepted', 'definitivelyRejected', NULL, NULL, ?4, ?5, ?6, 'correctRejectedInputWithNewKey')",
         params![key, method_id, digest, code, now, retained],
-    );
+    )
+    .map_err(sql_err)?;
+    Ok(())
+}
+
+fn insert_long_operation_in_tx(
+    tx: &Connection,
+    store: &V1Store,
+    operation_type: &str,
+) -> Result<(String, String), ContractError> {
+    let operation_id = store.next_id();
+    let rev = next_rev_in_tx(tx)?;
+    let now = now_rfc3339();
+    tx.execute(
+        "INSERT INTO operations (operation_id, operation_type, scope_kind, project_id, session_id,
+            state, revision, cancel_requested, cancellable, effect_status, progress_json,
+            created_at, updated_at)
+         VALUES (?1, ?2, 'instance', NULL, NULL, 'queued', ?3, 0, 1, 'known', '[]', ?4, ?4)",
+        params![operation_id, operation_type, rev, now],
+    )
+    .map_err(sql_err)?;
+    let placeholder = format!("tmp-op-{operation_id}-q");
+    let payload = serde_json::to_string(&json!({
+        "operationId": operation_id,
+        "operationType": operation_type,
+    }))
+    .unwrap_or_else(|_| "{}".into());
+    tx.execute(
+        "INSERT INTO events (cursor, resource_id, session_id, event_type, schema_id, payload_json, data_json, occurred_at)
+         VALUES (?1, ?2, '', 'operation.queued', ?3, ?4, ?4, ?5)",
+        params![placeholder, operation_id, OPERATION_EVENT_SCHEMA, payload, now],
+    )
+    .map_err(sql_err)?;
+    let seq = tx.last_insert_rowid();
+    tx.execute(
+        "UPDATE events SET cursor = ?1 WHERE seq = ?2",
+        params![format_cursor(seq), seq],
+    )
+    .map_err(sql_err)?;
+    Ok((operation_id, rev))
 }
 
 /// 终态推进后刷新重放 receipt 的 state（同 key 重试观察到终态；
@@ -435,14 +484,13 @@ struct AcceptedTarget {
     test_kinds: Vec<String>,
 }
 
-fn insert_target_rows(
+fn insert_target_rows_in_tx(
     store: &V1Store,
+    tx: &Connection,
     operation_id: &str,
     source_operation_id: Option<&str>,
     targets: &[AcceptedTarget],
 ) -> Result<(), ContractError> {
-    let mut conn = store.conn.lock().expect("sqlite mutex");
-    let tx = conn.transaction().map_err(sql_err)?;
     let now = now_rfc3339();
     for target in targets {
         tx.execute(
@@ -469,8 +517,32 @@ fn insert_target_rows(
         )
         .map_err(sql_err)?;
     }
+    Ok(())
+}
+
+#[cfg(test)]
+fn insert_target_rows(
+    store: &V1Store,
+    operation_id: &str,
+    source_operation_id: Option<&str>,
+    targets: &[AcceptedTarget],
+) -> Result<(), ContractError> {
+    let mut conn = store.conn.lock().map_err(|_| provider_mutex_err())?;
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(sql_err)?;
+    insert_target_rows_in_tx(store, &tx, operation_id, source_operation_id, targets)?;
     tx.commit().map_err(sql_err)?;
     Ok(())
+}
+
+fn provider_mutex_err() -> ContractError {
+    ContractError::new(
+        CODE_UNAVAILABLE,
+        "sqlite store mutex poisoned",
+        RetrySpec::backoff_read(Some(250)),
+        EffectStatus::Unknown,
+    )
 }
 
 fn operation_receipt(operation_id: &str, accepted_revision: &str, deduplicated: bool) -> Value {
@@ -484,82 +556,22 @@ fn operation_receipt(operation_id: &str, accepted_revision: &str, deduplicated: 
     })
 }
 
-/// The post-accept tail shared by start and retry: begin the operation,
-/// persist the target rows and the idempotency record, spawn the driver.
-/// Any persistence failure after `begin_long_operation` terminalizes the
-/// fresh row as failed instead of leaving an undriven queued row.
-#[allow(clippy::too_many_arguments)]
-fn accept_provider_test_operation(
-    store: &Arc<V1Store>,
-    method_id: &str,
-    input: &Value,
-    idempotency_key: Option<&str>,
-    source_operation_id: Option<&str>,
-    targets: &[AcceptedTarget],
-    probe_mode: &str,
-    request_budget: u64,
-    timeout_ms: u64,
-) -> Result<(String, Value), ContractError> {
-    let (operation_id, accepted_revision) =
-        store.begin_long_operation(method_id, &json!({"kind": "instance"}), true)?;
-    let receipt = operation_receipt(&operation_id, &accepted_revision, false);
-    let persist = (|| -> Result<(), ContractError> {
-        insert_target_rows(store, &operation_id, source_operation_id, targets)?;
-        if let Some(key) = idempotency_key {
-            record_acceptance(
-                store,
-                key,
-                method_id,
-                input,
-                // requests.lookup 合同的 resource oneOf：受理的是 operation，
-                // 必须带 kind 标记（与 workspaces/configuration 等域一致）。
-                &json!({"kind": "operation", "operationId": operation_id}),
-                &receipt,
-            )?;
-        }
-        Ok(())
-    })();
-    if let Err(err) = persist {
-        let _ = store.finish_long_operation(
-            &operation_id,
-            LongOperationOutcome::Failed {
-                code: err.code.clone(),
-                message: err.message.clone(),
-            },
-        );
-        return Err(err);
-    }
-    store.event_notifier().notify_waiters();
-    spawn_probe_driver(
-        store.clone(),
-        operation_id.clone(),
-        method_id.to_owned(),
-        source_operation_id.map(str::to_owned),
-        probe_mode.to_owned(),
-        request_budget,
-        timeout_ms,
-        idempotency_key.map(str::to_owned),
-    );
-    Ok((operation_id, receipt))
-}
-
-// ---------------------------------------------------------------------------
-// provider_test.start — accept path
-// ---------------------------------------------------------------------------
-
-/// Pre-accept validation over every target (the baseline validates before
-/// accepting a task: "先校验schema、作用域与实际能力"). Zero side effects:
-/// on failure nothing has been created.
-fn precheck_start_targets(
-    store: &V1Store,
+fn precheck_start_targets_in_tx(
+    conn: &Connection,
     input: &Value,
     probe_mode: &str,
     request_budget: u64,
-) -> Result<Vec<AcceptedTarget>, ContractError> {
+) -> Result<(Vec<AcceptedTarget>, u64), ContractError> {
+    let timeout_ms = match input.get("timeoutMs") {
+        None | Some(Value::Null) => 30_000,
+        Some(v) => match v.as_u64() {
+            Some(ms) if ms >= 1 => ms.clamp(MIN_PROBE_TIMEOUT_MS, MAX_PROBE_TIMEOUT_MS),
+            _ => return Err(invalid("timeoutMs must be a positive integer")),
+        },
+    };
     let raw_targets = input["targets"].as_array().cloned().unwrap_or_default();
     let mut targets = Vec::with_capacity(raw_targets.len());
     let mut budget_total: u64 = 0;
-    let conn = store.conn.lock().expect("sqlite mutex");
     for target in &raw_targets {
         let target_id = target["targetId"].as_str().unwrap_or_default().to_owned();
         let provider_id = target["providerId"].as_str().unwrap_or_default().to_owned();
@@ -579,7 +591,7 @@ fn precheck_start_targets(
             })
             .unwrap_or_default();
 
-        let Some(provider) = load_tested_provider(&conn, &provider_id)? else {
+        let Some(provider) = load_tested_provider(conn, &provider_id)? else {
             return Err(config_revision_conflict(format!(
                 "provider `{provider_id}` does not exist; the tested configuration is not current"
             )));
@@ -590,18 +602,14 @@ fn precheck_start_targets(
                 provider.revision
             )));
         }
-        // Effective credential: explicit target override, else the
-        // provider's stored reference. A credentialless provider is
-        // legitimate (local servers, the baseline's ollama case); a present
-        // reference must at least resolve to the right kind.
         let credential_ref = match &explicit_credential {
             Some(cref) => {
-                check_credential_reference(&conn, cref)?;
+                check_credential_reference(conn, cref)?;
                 Some(cref.clone())
             }
             None => match provider.credential_ref.as_deref() {
                 Some(cref) => {
-                    check_credential_reference(&conn, cref)?;
+                    check_credential_reference(conn, cref)?;
                     Some(cref.to_owned())
                 }
                 None => None,
@@ -612,12 +620,6 @@ fn precheck_start_targets(
                 "target `{target_id}`: a network probe needs a modelId (every provider protocol addresses a concrete model)"
             )));
         }
-        // A target with no kinds would record a `succeeded` outcome without
-        // probing anything — "无证据即 unknown 不猜" forbids passing without
-        // evidence, and the retry gate would then lock that target in as
-        // already-succeeded. Reject at accept time (the contract's
-        // `INVALID_ARGUMENT`; the schema itself has no `minItems` on
-        // `testKinds`).
         if test_kinds.is_empty() {
             return Err(invalid(format!(
                 "target `{target_id}`: testKinds must name at least one kind to probe"
@@ -652,7 +654,7 @@ fn precheck_start_targets(
             test_kinds,
         });
     }
-    Ok(targets)
+    Ok((targets, timeout_ms))
 }
 
 async fn provider_test_start(
@@ -671,54 +673,78 @@ async fn provider_test_start(
         .get("requestBudget")
         .and_then(Value::as_u64)
         .unwrap_or(1);
-    let timeout_ms = input
-        .get("timeoutMs")
-        .and_then(Value::as_u64)
-        .unwrap_or(30_000);
+    let digest = compute_input_digest(method_id, &input);
 
-    // 幂等 intake：同 key 同输入重放受理结果（「再次相同提交不重复创
-    // 建」）；同 key 不同输入 → IDEMPOTENCY_CONFLICT。
-    if let Some(key) = idempotency_key.as_deref()
-        && let Some(replay) = replay_accepted_receipt(&store, method_id, &input, key)?
-    {
-        return Ok((ResponseOutcome::Accepted, replay));
-    }
-
-    // 预检（零副作用）。拒绝是终局性的：登记后同 key 重试得到同一拒绝。
-    let targets = match precheck_start_targets(&store, &input, &probe_mode, request_budget) {
-        Ok(targets) => targets,
-        Err(err) => {
-            if let Some(key) = idempotency_key.as_deref() {
-                record_rejection(&store, key, method_id, &input, &err.code);
+    let store_bg = store.clone();
+    let probe_mode_bg = probe_mode.clone();
+    let key_bg = idempotency_key.clone();
+    let outcome = tokio::task::spawn_blocking(
+        move || -> Result<(bool, String, u64, Value), ContractError> {
+            let mut conn = store_bg.conn.lock().map_err(|_| provider_mutex_err())?;
+            let tx = conn
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(sql_err)?;
+            if let Some(key) = key_bg.as_deref()
+                && let Some(replay) = check_idempotency_in_tx(&tx, method_id, &digest, key)?
+            {
+                tx.commit().map_err(sql_err)?;
+                return Ok((true, String::new(), 0, replay));
             }
-            return Err(err.into());
-        }
-    };
+            let (targets, timeout_ms) =
+                match precheck_start_targets_in_tx(&tx, &input, &probe_mode_bg, request_budget) {
+                    Ok(parsed) => parsed,
+                    Err(err) => {
+                        // Only definitive rejections (`RetryMode::Never`) poison the key.
+                        if err.retry.mode == RetryMode::Never
+                            && let Some(key) = key_bg.as_deref()
+                        {
+                            record_rejection_in_tx(&tx, key, method_id, &digest, &err.code)?;
+                            tx.commit().map_err(sql_err)?;
+                        }
+                        return Err(err);
+                    }
+                };
+            let (operation_id, accepted_revision) =
+                insert_long_operation_in_tx(&tx, &store_bg, method_id)?;
+            let receipt = operation_receipt(&operation_id, &accepted_revision, false);
+            insert_target_rows_in_tx(&store_bg, &tx, &operation_id, None, &targets)?;
+            if let Some(key) = key_bg.as_deref() {
+                record_acceptance_in_tx(
+                    &tx,
+                    key,
+                    method_id,
+                    &digest,
+                    &json!({"kind": "operation", "operationId": operation_id}),
+                    &receipt,
+                )?;
+            }
+            tx.commit().map_err(sql_err)?;
+            Ok((false, operation_id, timeout_ms, receipt))
+        },
+    )
+    .await
+    .map_err(|_| DispatchError::from(provider_mutex_err()))?
+    .map_err(DispatchError::from)?;
 
-    let (_operation_id, receipt) = accept_provider_test_operation(
-        &store,
-        method_id,
-        &input,
-        idempotency_key.as_deref(),
-        None,
-        &targets,
-        &probe_mode,
-        request_budget,
-        timeout_ms,
-    )?;
+    let (replayed, operation_id, timeout_ms, receipt) = outcome;
+    if !replayed {
+        store.event_notifier().notify_waiters();
+        spawn_probe_driver(
+            store,
+            operation_id,
+            method_id.to_owned(),
+            None,
+            probe_mode,
+            request_budget,
+            timeout_ms,
+            idempotency_key,
+        );
+    }
     Ok((ResponseOutcome::Accepted, receipt))
 }
 
-// ---------------------------------------------------------------------------
-// provider_test.retry — accept path
-// ---------------------------------------------------------------------------
-
-/// Pre-accept validation for a retry: the source operation is one of ours
-/// and terminal, every named target belongs to it and did not succeed, and
-/// the provider is still at the revision the source test targeted
-/// （「旧revision不能偷偷测试新配置」）.
-fn precheck_retry_targets(
-    store: &V1Store,
+fn precheck_retry_targets_in_tx(
+    conn: &Connection,
     input: &Value,
     probe_mode: &str,
     request_budget: u64,
@@ -739,9 +765,7 @@ fn precheck_retry_targets(
 
     let mut targets = Vec::with_capacity(target_ids.len());
     let mut budget_total: u64 = 0;
-    let conn = store.conn.lock().expect("sqlite mutex");
 
-    // The source operation must be one of ours and terminal.
     let source: Option<(String, i64)> = conn
         .query_row(
             "SELECT operation_type, terminal FROM operations WHERE operation_id = ?1",
@@ -803,14 +827,12 @@ fn precheck_retry_targets(
                 "target `{target_id}` not found in source operation `{source_operation_id}`"
             )));
         };
-        // 「重试显式失败测试项」: only explicitly non-succeeded outcomes are
-        // retryable (a succeeded target is a fresh `start`, not a retry).
         if state == "succeeded" {
             return Err(invalid(format!(
                 "target `{target_id}` did not fail in the source operation; nothing to retry"
             )));
         }
-        let Some(provider) = load_tested_provider(&conn, &provider_id)? else {
+        let Some(provider) = load_tested_provider(conn, &provider_id)? else {
             return Err(config_revision_conflict(format!(
                 "provider `{provider_id}` no longer exists; the source test configuration is not current"
             )));
@@ -821,16 +843,14 @@ fn precheck_retry_targets(
                 provider.revision
             )));
         }
-        // The retry keeps the source target's explicit credential override;
-        // without one it follows the provider's current reference.
         let credential_ref = match source_credential {
             Some(cref) => {
-                check_credential_reference(&conn, &cref)?;
+                check_credential_reference(conn, &cref)?;
                 Some(cref)
             }
             None => match provider.credential_ref.as_deref() {
                 Some(cref) => {
-                    check_credential_reference(&conn, cref)?;
+                    check_credential_reference(conn, cref)?;
                     Some(cref.to_owned())
                 }
                 None => None,
@@ -842,10 +862,6 @@ fn precheck_retry_targets(
             )));
         }
         let test_kinds: Vec<String> = serde_json::from_str(&kinds_json).unwrap_or_default();
-        // Same rule as `precheck_start_targets`: a kind-less target would
-        // "pass" without probing anything. `start` now rejects empty
-        // `testKinds`, so a kind-less source row only exists through a
-        // corrupted `test_kinds_json` — refuse it the same way.
         if test_kinds.is_empty() {
             return Err(invalid(format!(
                 "target `{target_id}` in source operation `{source_operation_id}` has no test kinds to retry"
@@ -899,38 +915,81 @@ async fn provider_test_retry(
         .get("requestBudget")
         .and_then(Value::as_u64)
         .unwrap_or(1);
-    // The retry input schema has no timeoutMs; the start-side default
-    // (30 s per HTTP attempt) applies.
     let timeout_ms = 30_000u64;
+    let digest = compute_input_digest(method_id, &input);
 
-    if let Some(key) = idempotency_key.as_deref()
-        && let Some(replay) = replay_accepted_receipt(&store, method_id, &input, key)?
-    {
-        return Ok((ResponseOutcome::Accepted, replay));
-    }
-
-    let (source_operation_id, targets) =
-        match precheck_retry_targets(&store, &input, &probe_mode, request_budget) {
-            Ok(found) => found,
-            Err(err) => {
-                if let Some(key) = idempotency_key.as_deref() {
-                    record_rejection(&store, key, method_id, &input, &err.code);
-                }
-                return Err(err.into());
+    let store_bg = store.clone();
+    let probe_mode_bg = probe_mode.clone();
+    let key_bg = idempotency_key.clone();
+    let outcome = tokio::task::spawn_blocking(
+        move || -> Result<(bool, String, String, Value), ContractError> {
+            let mut conn = store_bg.conn.lock().map_err(|_| provider_mutex_err())?;
+            let tx = conn
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(sql_err)?;
+            if let Some(key) = key_bg.as_deref()
+                && let Some(replay) = check_idempotency_in_tx(&tx, method_id, &digest, key)?
+            {
+                tx.commit().map_err(sql_err)?;
+                return Ok((true, String::new(), String::new(), replay));
             }
-        };
+            let (source_operation_id, targets) =
+                match precheck_retry_targets_in_tx(&tx, &input, &probe_mode_bg, request_budget) {
+                    Ok(parsed) => parsed,
+                    Err(err) => {
+                        // Only definitive rejections (`RetryMode::Never`) poison the key;
+                        // retryable errors like `SOURCE_NOT_TERMINAL` allow safe replay.
+                        if err.retry.mode == RetryMode::Never
+                            && let Some(key) = key_bg.as_deref()
+                        {
+                            record_rejection_in_tx(&tx, key, method_id, &digest, &err.code)?;
+                            tx.commit().map_err(sql_err)?;
+                        }
+                        return Err(err);
+                    }
+                };
+            let (operation_id, accepted_revision) =
+                insert_long_operation_in_tx(&tx, &store_bg, method_id)?;
+            let receipt = operation_receipt(&operation_id, &accepted_revision, false);
+            insert_target_rows_in_tx(
+                &store_bg,
+                &tx,
+                &operation_id,
+                Some(&source_operation_id),
+                &targets,
+            )?;
+            if let Some(key) = key_bg.as_deref() {
+                record_acceptance_in_tx(
+                    &tx,
+                    key,
+                    method_id,
+                    &digest,
+                    &json!({"kind": "operation", "operationId": operation_id}),
+                    &receipt,
+                )?;
+            }
+            tx.commit().map_err(sql_err)?;
+            Ok((false, operation_id, source_operation_id, receipt))
+        },
+    )
+    .await
+    .map_err(|_| DispatchError::from(provider_mutex_err()))?
+    .map_err(DispatchError::from)?;
 
-    let (_operation_id, receipt) = accept_provider_test_operation(
-        &store,
-        method_id,
-        &input,
-        idempotency_key.as_deref(),
-        Some(&source_operation_id),
-        &targets,
-        &probe_mode,
-        request_budget,
-        timeout_ms,
-    )?;
+    let (replayed, operation_id, source_operation_id, receipt) = outcome;
+    if !replayed {
+        store.event_notifier().notify_waiters();
+        spawn_probe_driver(
+            store,
+            operation_id,
+            method_id.to_owned(),
+            Some(source_operation_id),
+            probe_mode,
+            request_budget,
+            timeout_ms,
+            idempotency_key,
+        );
+    }
     Ok((ResponseOutcome::Accepted, receipt))
 }
 
@@ -1044,10 +1103,28 @@ fn model_then_not_found(folded: &str) -> bool {
 /// no-chat-text continuation paths).
 const CODE_PROBE_INVALID_RESPONSE: &str = "PROBE_INVALID_RESPONSE";
 
-/// A bounded response detail for issue messages (the body text is the
-/// provider's own response, never our request material; 200 chars keeps
-/// the stored record small).
-fn response_detail(body: &[u8], status: u16) -> String {
+fn token_redact_regex() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(
+            r"(?i)\b(?:bearer\s+[a-z0-9._~+/=-]{8,}|sk-[a-z0-9_-]{8,}|aiza[a-z0-9_-]{8,}|gh[pousr]_[a-z0-9]{8,}|github_pat_[a-z0-9_]{12,}|xox[baprs]-[a-z0-9-]{8,})",
+        )
+        .expect("valid token redact regex")
+    })
+}
+
+fn redact_probe_secrets(text: &str, secret: Option<&str>) -> String {
+    let mut out = text.to_owned();
+    if let Some(sec) = secret.map(str::trim).filter(|s| !s.is_empty()) {
+        out = out.replace(sec, "[REDACTED]");
+    }
+    token_redact_regex()
+        .replace_all(&out, "[REDACTED]")
+        .into_owned()
+}
+
+/// Internal classification-only extraction (never written to SQLite/responses).
+fn raw_response_detail(body: &[u8], status: u16) -> String {
     let text = String::from_utf8_lossy(body);
     if let Ok(parsed) = serde_json::from_str::<Value>(text.trim()) {
         for pointer in ["/error/message", "/error/type", "/message"] {
@@ -1060,6 +1137,24 @@ fn response_detail(body: &[u8], status: u16) -> String {
         return format!("{status}");
     }
     truncate_detail(text.trim())
+}
+
+/// Sanitized bounded response detail for persisted/returned `issues[].message`:
+/// redacts secret tokens BEFORE truncation and avoids echoing arbitrary raw
+/// non-JSON HTML/internal-service response banners.
+fn response_detail(body: &[u8], status: u16, secret: Option<&str>) -> String {
+    let text = String::from_utf8_lossy(body);
+    if let Ok(parsed) = serde_json::from_str::<Value>(text.trim()) {
+        for pointer in ["/error/message", "/error/type", "/message"] {
+            if let Some(found) = parsed.pointer(pointer).and_then(Value::as_str) {
+                return truncate_detail(&redact_probe_secrets(found, secret));
+            }
+        }
+    }
+    if text.trim().is_empty() {
+        return format!("{status}");
+    }
+    format!("HTTP {status} error response")
 }
 
 fn truncate_detail(text: &str) -> String {
@@ -1431,18 +1526,202 @@ fn find_case_insensitive(haystack: &str, needle: &str) -> Option<usize> {
     (0..=h.len() - n.len()).find(|&i| h[i..i + n.len()].eq_ignore_ascii_case(n))
 }
 
+/// Returns `true` iff `ip` is permitted for `provider_test` outbound probes:
+/// - Loopback (`127.0.0.0/8`, `::1`) is allowed so local providers and
+///   local test fixtures work.
+/// - Cloud metadata (`169.254.169.254`, `fd00:ec2::254`), link-local
+///   (`169.254.0.0/16`, `fe80::/10`), RFC1918 private networks, ULA (`fc00::/7`),
+///   unspecified (`0.0.0.0/8`, `::`), CGNAT (`100.64.0.0/10`), NAT64/6to4/Teredo,
+///   multicast/reserved, and IPv4-mapped/compatible forms thereof are blocked.
+fn is_allowed_probe_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            if v4.is_loopback() {
+                return true;
+            }
+            let o = v4.octets();
+            !(v4.is_unspecified()
+                || o[0] == 0
+                || v4.is_private()
+                || v4.is_link_local()
+                || v4.is_multicast()
+                || v4.is_broadcast()
+                || v4.is_documentation()
+                || (o[0] == 100 && (o[1] & 0b1100_0000) == 64)
+                || (o[0] == 192 && o[1] == 0 && o[2] == 0)
+                || (o[0] == 198 && (o[1] == 18 || o[1] == 19))
+                || o[0] >= 240)
+        }
+        IpAddr::V6(v6) => {
+            if let Some(mapped) = v6.to_ipv4_mapped() {
+                return is_allowed_probe_ip(IpAddr::V4(mapped));
+            }
+            if v6.is_loopback() {
+                return true;
+            }
+            let segs = v6.segments();
+            let ipv4_compat = segs[..6] == [0, 0, 0, 0, 0, 0] && !v6.is_unspecified();
+            !(v6.is_unspecified()
+                || ipv4_compat
+                || v6.is_multicast()
+                || (segs[0] & 0xffc0) == 0xfe80
+                || (segs[0] & 0xfe00) == 0xfc00
+                || (segs[0] == 0x0064 && segs[1] == 0xff9b)
+                || segs[0] == 0x2002
+                || (segs[0] == 0x2001 && segs[1] == 0x0000))
+        }
+    }
+}
+
+struct ValidatedStream(TokioIo<tokio::net::TcpStream>);
+
+impl hyper::rt::Read for ValidatedStream {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: hyper::rt::ReadBufCursor<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.get_mut().0).poll_read(cx, buf)
+    }
+}
+
+impl hyper::rt::Write for ValidatedStream {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        Pin::new(&mut self.get_mut().0).poll_write(cx, buf)
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.get_mut().0).poll_flush(cx)
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.get_mut().0).poll_shutdown(cx)
+    }
+}
+
+impl HyperConnection for ValidatedStream {
+    fn connected(&self) -> Connected {
+        Connected::new()
+    }
+}
+
+/// DNS-rebinding-safe connector: resolves DNS once, checks every address
+/// against SSRF and plaintext-credential rules, connects directly to those
+/// validated `SocketAddr`s, and re-verifies `peer_addr` post-connect.
+#[derive(Clone)]
+struct ValidatedProbeConnector {
+    has_credential: bool,
+}
+
+async fn resolve_and_validate_probe_addrs(
+    uri: &hyper::Uri,
+    has_credential: bool,
+) -> Result<(String, Vec<SocketAddr>), std::io::Error> {
+    let scheme = uri.scheme_str().unwrap_or_default().to_ascii_lowercase();
+    if scheme != "http" && scheme != "https" {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "probe scheme must be http or https",
+        ));
+    }
+    let Some(raw_host) = uri.host().filter(|h| !h.is_empty()) else {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "probe uri missing host",
+        ));
+    };
+    let host_clean = raw_host
+        .strip_prefix('[')
+        .and_then(|h| h.strip_suffix(']'))
+        .unwrap_or(raw_host);
+    let port = uri
+        .port_u16()
+        .unwrap_or(if scheme == "https" { 443 } else { 80 });
+    let addrs: Vec<SocketAddr> = if let Ok(ip) = host_clean.parse::<IpAddr>() {
+        vec![SocketAddr::new(ip, port)]
+    } else {
+        tokio::net::lookup_host((host_clean, port)).await?.collect()
+    };
+    if addrs.is_empty() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "probe host resolved to no addresses",
+        ));
+    }
+    for addr in &addrs {
+        if !is_allowed_probe_ip(addr.ip()) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "probe destination IP blocked by SSRF policy",
+            ));
+        }
+        if scheme == "http" && has_credential && !addr.ip().is_loopback() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "refusing to send credential over plaintext http to non-loopback host",
+            ));
+        }
+    }
+    Ok((scheme, addrs))
+}
+
+impl Service<hyper::Uri> for ValidatedProbeConnector {
+    type Response = ValidatedStream;
+    type Error = std::io::Error;
+    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
+
+    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, uri: hyper::Uri) -> Self::Future {
+        let has_credential = self.has_credential;
+        Box::pin(async move {
+            let (scheme, addrs) = resolve_and_validate_probe_addrs(&uri, has_credential).await?;
+            let connect_fut = tokio::net::TcpStream::connect(addrs.as_slice());
+            let stream = tokio::time::timeout(Duration::from_secs(10), connect_fut)
+                .await
+                .map_err(|_| {
+                    std::io::Error::new(std::io::ErrorKind::TimedOut, "TCP connect timed out")
+                })??;
+            let peer = stream.peer_addr()?;
+            if !is_allowed_probe_ip(peer.ip()) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "connected peer IP blocked by SSRF policy",
+                ));
+            }
+            if scheme == "http" && has_credential && !peer.ip().is_loopback() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "refusing to send credential over plaintext http to non-loopback peer",
+                ));
+            }
+            Ok(ValidatedStream(TokioIo::new(stream)))
+        })
+    }
+}
+
 /// One full HTTP attempt against one candidate URL. Failures are transport
-/// errors (connect / timeout / read), reported exactly like the baseline's
-/// `TypeError: fetch failed` surface minus the secret material.
+/// errors (connect / SSRF block / timeout / 64 KiB body cap).
 async fn send_probe_request(
     url: &str,
     headers: &[(&'static str, String)],
     body: &Value,
     timeout_ms: u64,
+    has_credential: bool,
 ) -> Result<(u16, Bytes), String> {
     let config = crate::runtime::model::http::webpki_client_config();
-    let client: Client<_, Full<Bytes>> = Client::builder(TokioExecutor::new())
-        .build(crate::runtime::model::http::https_connector(config));
+    let https = hyper_rustls::HttpsConnectorBuilder::new()
+        .with_tls_config(config)
+        .https_or_http()
+        .enable_http1()
+        .wrap_connector(ValidatedProbeConnector { has_credential });
+    let client: Client<_, Full<Bytes>> = Client::builder(TokioExecutor::new()).build(https);
     let uri: hyper::Uri = url
         .parse()
         .map_err(|error| format!("invalid probe url: {error}"))?;
@@ -1459,15 +1738,19 @@ async fn send_probe_request(
             .await
             .map_err(|error| format!("fetch failed: {error}"))?;
         let status = response.status();
-        let body = response
-            .into_body()
+        let body = Limited::new(response.into_body(), MAX_PROBE_RESPONSE_BYTES)
             .collect()
             .await
-            .map_err(|error| format!("fetch failed: {error}"))?
+            .map_err(|_| {
+                format!(
+                    "fetch failed: response body exceeded {MAX_PROBE_RESPONSE_BYTES} byte limit or stream failed"
+                )
+            })?
             .to_bytes();
         Ok::<(u16, Bytes), String>((status.as_u16(), body))
     };
-    match tokio::time::timeout(Duration::from_millis(timeout_ms), exchange).await {
+    let clamped_ms = timeout_ms.clamp(MIN_PROBE_TIMEOUT_MS, MAX_PROBE_TIMEOUT_MS);
+    match tokio::time::timeout(Duration::from_millis(clamped_ms), exchange).await {
         Ok(result) => result,
         Err(_) => Err("Connection timed out.".to_owned()),
     }
@@ -1502,9 +1785,11 @@ async fn run_kind_probe(
             "provider endpoint is empty".to_owned(),
         );
     }
+    let has_credential = secret.is_some();
     let (headers, body, expected_color) = probe_request(protocol, secret, model_id, kind);
     let mut remaining = request_budget.max(1);
-    let mut last_detail = String::new();
+    let mut last_raw_detail = String::new();
+    let mut last_safe_detail = String::new();
     let mut last_status: Option<u16> = None;
     let mut last_was_2xx = false;
     for url in &candidates {
@@ -1512,31 +1797,26 @@ async fn run_kind_probe(
             break;
         }
         remaining -= 1;
-        match send_probe_request(url, &headers, &body, timeout_ms).await {
-            // Transport failure (connect / timeout): no evidence, no
-            // candidate fallback (the baseline's retry ladder lives inside
-            // networkFetch; v1 has no retryPolicy input).
+        match send_probe_request(url, &headers, &body, timeout_ms, has_credential).await {
             Err(message) => {
                 return KindProbeResult::Undetermined(
                     CODE_ENDPOINT_UNREACHABLE.to_owned(),
-                    message,
+                    redact_probe_secrets(&message, secret),
                 );
             }
             Ok((status, response_body)) => {
                 last_status = Some(status);
-                last_detail = response_detail(&response_body, status);
+                last_raw_detail = raw_response_detail(&response_body, status);
+                last_safe_detail = response_detail(&response_body, status, secret);
                 if (200..300).contains(&status) {
                     last_was_2xx = true;
                     let parsed: Value =
                         serde_json::from_slice(&response_body).unwrap_or(Value::Null);
                     if !is_expected_shape(protocol, &parsed) {
-                        // Baseline: shape mismatch falls through to the next
-                        // candidate; a budget of 1 leaves it undetermined.
                         continue;
                     }
                     let text = extract_probe_text(protocol, &parsed);
                     if text.is_empty() {
-                        // Valid completion without usable model output.
                         continue;
                     }
                     if kind == "image"
@@ -1549,21 +1829,17 @@ async fn run_kind_probe(
                     }
                     return KindProbeResult::Supported;
                 }
-                // Non-2xx: an explicit server-side "modality unsupported"
-                // statement is definitive negative evidence.
-                if kind == "image" && looks_like_image_unsupported(&last_detail) {
+                if kind == "image" && looks_like_image_unsupported(&last_raw_detail) {
                     return KindProbeResult::Unsupported;
                 }
-                // Baseline fallback statuses try the next candidate.
                 if matches!(status, 400 | 404 | 405) && remaining > 0 {
                     continue;
                 }
-                let code = classify_probe_error(&last_detail, status);
-                return KindProbeResult::Undetermined(code.to_owned(), last_detail);
+                let code = classify_probe_error(&last_raw_detail, status);
+                return KindProbeResult::Undetermined(code.to_owned(), last_safe_detail);
             }
         }
     }
-    // Candidates exhausted (budget or shape): undetermined.
     if last_was_2xx {
         return KindProbeResult::Undetermined(
             CODE_PROBE_INVALID_RESPONSE.to_owned(),
@@ -1571,8 +1847,8 @@ async fn run_kind_probe(
         );
     }
     let status = last_status.unwrap_or(0);
-    let code = classify_probe_error(&last_detail, status);
-    KindProbeResult::Undetermined(code.to_owned(), last_detail)
+    let code = classify_probe_error(&last_raw_detail, status);
+    KindProbeResult::Undetermined(code.to_owned(), last_safe_detail)
 }
 
 // ---------------------------------------------------------------------------
@@ -1660,7 +1936,9 @@ async fn drive_provider_test(
     timeout_ms: u64,
 ) -> Vec<(Value, String)> {
     let pending: Vec<PendingTarget> = {
-        let conn = store.conn.lock().expect("sqlite mutex");
+        let Ok(conn) = store.conn.lock() else {
+            return Vec::new();
+        };
         let Ok(mut stmt) = conn.prepare(
             "SELECT target_id, provider_id, model_id, protocol, endpoint, config_digest,
                     credential_ref, test_kinds_json
@@ -1829,7 +2107,7 @@ fn update_target_outcome(
     evidence_ids: &[String],
     issues: &[Value],
 ) -> Result<(), ContractError> {
-    let conn = store.conn.lock().expect("sqlite mutex");
+    let conn = store.conn.lock().map_err(|_| provider_mutex_err())?;
     conn.execute(
         "UPDATE v1_provider_tests
          SET state = ?1, elapsed_ms = ?2, evidence_ids_json = ?3, issues_json = ?4, updated_at = ?5
@@ -1879,7 +2157,9 @@ fn record_evidence(
     supported: bool,
 ) -> Option<String> {
     let evidence_id = store.next_id();
-    let conn = store.conn.lock().expect("sqlite mutex");
+    let Ok(conn) = store.conn.lock() else {
+        return None;
+    };
     conn.execute(
         "INSERT INTO v1_test_evidence (evidence_id, operation_id, target_id, provider_id, model_id, config_digest, kind, supported, created_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
@@ -1907,82 +2187,80 @@ async fn provider_test_acknowledge(
     rt: Arc<PublicV1Runtime>,
     input: Value,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
-    let store = rt.store();
-    let operation_id = input["operationId"].as_str().unwrap_or_default().to_owned();
-    let expected_revision = input["expectedRevision"]
-        .as_str()
-        .unwrap_or_default()
-        .to_owned();
+    let store = rt.store().clone();
+    let store_bg = store.clone();
+    let body = tokio::task::spawn_blocking(move || -> Result<Value, ContractError> {
+        let operation_id = input["operationId"].as_str().unwrap_or_default().to_owned();
+        let expected_revision = input["expectedRevision"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
 
-    let mut conn = store.conn.lock().expect("sqlite mutex");
-    let tx = conn.transaction().map_err(sql_err)?;
-    let row: Option<(String, i64, String)> = tx
-        .query_row(
-            "SELECT operation_type, terminal, revision FROM operations WHERE operation_id = ?1",
-            params![operation_id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        let mut conn = store_bg.conn.lock().map_err(|_| provider_mutex_err())?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sql_err)?;
+        let row: Option<(String, i64, String)> = tx
+            .query_row(
+                "SELECT operation_type, terminal, revision FROM operations WHERE operation_id = ?1",
+                params![operation_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .optional()
+            .map_err(sql_err)?;
+        let Some((operation_type, terminal, revision)) = row else {
+            return Err(invalid(format!("operation `{operation_id}` not found")));
+        };
+        if operation_type != "provider_test.start" && operation_type != "provider_test.retry" {
+            return Err(invalid(format!(
+                "operation `{operation_id}` is not a provider test operation"
+            )));
+        }
+        if terminal == 0 {
+            return Err(ContractError::new(
+                CODE_OPERATION_NOT_READY,
+                format!("operation `{operation_id}` has not reached a terminal state"),
+                RetrySpec::after_reconcile(),
+                EffectStatus::NotApplied,
+            ));
+        }
+        if revision != expected_revision {
+            return Err(ContractError::new(
+                CODE_REVISION_CONFLICT,
+                format!("expectedRevision `{expected_revision}` does not match `{revision}`"),
+                RetrySpec::after_reconcile(),
+                EffectStatus::NotApplied,
+            ));
+        }
+
+        let new_rev = next_rev_in_tx(&tx)?;
+        let now = now_rfc3339();
+        tx.execute(
+            "INSERT INTO v1_provider_test_state (operation_id, acknowledged, acknowledged_at)
+             VALUES (?1, 1, ?2)
+             ON CONFLICT(operation_id) DO UPDATE SET acknowledged = 1, acknowledged_at = excluded.acknowledged_at",
+            params![operation_id, now],
         )
-        .optional()
         .map_err(sql_err)?;
-    let Some((operation_type, terminal, revision)) = row else {
-        return Err(invalid(format!("operation `{operation_id}` not found")).into());
-    };
-    if operation_type != "provider_test.start" && operation_type != "provider_test.retry" {
-        return Err(invalid(format!(
-            "operation `{operation_id}` is not a provider test operation"
-        ))
-        .into());
-    }
-    // 「运行中不得ack成终态」: acknowledging a non-terminal operation must
-    // not fake a terminal record.
-    if terminal == 0 {
-        return Err(ContractError::new(
-            CODE_OPERATION_NOT_READY,
-            format!("operation `{operation_id}` has not reached a terminal state"),
-            RetrySpec::after_reconcile(),
-            EffectStatus::NotApplied,
+        tx.execute(
+            "UPDATE operations SET revision = ?1, updated_at = ?2 WHERE operation_id = ?3",
+            params![new_rev, now, operation_id],
         )
-        .into());
-    }
-    if revision != expected_revision {
-        return Err(ContractError::new(
-            CODE_REVISION_CONFLICT,
-            format!("expectedRevision `{expected_revision}` does not match `{revision}`"),
-            RetrySpec::after_reconcile(),
-            EffectStatus::NotApplied,
-        )
-        .into());
-    }
+        .map_err(sql_err)?;
+        append_acknowledge_event_in_tx(&tx, &operation_id)?;
+        tx.commit().map_err(sql_err)?;
 
-    // The CAS window is closed inside this transaction: nothing else can
-    // move the revision between the check above and the writes below.
-    let new_rev = next_rev_in_tx(&tx)?;
-    let now = now_rfc3339();
-    tx.execute(
-        "INSERT INTO v1_provider_test_state (operation_id, acknowledged, acknowledged_at)
-         VALUES (?1, 1, ?2)
-         ON CONFLICT(operation_id) DO UPDATE SET acknowledged = 1, acknowledged_at = excluded.acknowledged_at",
-        params![operation_id, now],
-    )
-    .map_err(sql_err)?;
-    tx.execute(
-        "UPDATE operations SET revision = ?1, updated_at = ?2 WHERE operation_id = ?3",
-        params![new_rev, now, operation_id],
-    )
-    .map_err(sql_err)?;
-    append_acknowledge_event_in_tx(&tx, &operation_id)?;
-    tx.commit().map_err(sql_err)?;
-    drop(conn);
-    store.event_notifier().notify_waiters();
-
-    Ok((
-        ResponseOutcome::Succeeded,
-        json!({
+        Ok(json!({
             "operationId": operation_id,
             "acknowledged": true,
             "revision": new_rev,
-        }),
-    ))
+        }))
+    })
+    .await
+    .map_err(|_| DispatchError::from(provider_mutex_err()))?
+    .map_err(DispatchError::from)?;
+    store.event_notifier().notify_waiters();
+    Ok((ResponseOutcome::Succeeded, body))
 }
 
 fn next_rev_in_tx(conn: &Connection) -> Result<String, ContractError> {
@@ -2046,253 +2324,277 @@ async fn provider_test_confirm_capabilities(
     rt: Arc<PublicV1Runtime>,
     input: Value,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
-    let store = rt.store();
-    let operation_id = input["operationId"].as_str().unwrap_or_default().to_owned();
-    let reference = &input["model"];
-    let provider_id = reference["providerId"]
-        .as_str()
-        .unwrap_or_default()
-        .to_owned();
-    let model_id = reference["modelId"].as_str().unwrap_or_default().to_owned();
-    let expected_model_revision = input["expectedModelRevision"]
-        .as_str()
-        .unwrap_or_default()
-        .to_owned();
-    let evidence_ids: Vec<String> = input["evidenceIds"]
-        .as_array()
-        .map(|arr| {
-            arr.iter()
-                .filter_map(Value::as_str)
-                .map(str::to_owned)
-                .collect()
-        })
-        .unwrap_or_default();
-    let capabilities: Vec<Value> = input["capabilities"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
+    let store = rt.store().clone();
+    let store_bg = store.clone();
+    let body = tokio::task::spawn_blocking(move || -> Result<Value, ContractError> {
+        let operation_id = input["operationId"].as_str().unwrap_or_default().to_owned();
+        let reference = &input["model"];
+        let provider_id = reference["providerId"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
+        let model_id = reference["modelId"].as_str().unwrap_or_default().to_owned();
+        let expected_model_revision = input["expectedModelRevision"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
+        let evidence_ids: Vec<String> = input["evidenceIds"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let capabilities: Vec<Value> = input["capabilities"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
 
-    // Pair validation: non-empty unique keys.
-    let mut seen_keys = std::collections::BTreeSet::new();
-    let mut pairs: Vec<(String, Value)> = Vec::with_capacity(capabilities.len());
-    for pair in &capabilities {
-        let key = pair["key"].as_str().unwrap_or_default().to_owned();
-        if key.is_empty() {
-            return Err(invalid("capability key must be a non-empty string").into());
+        // Pair validation: non-empty unique keys.
+        let mut seen_keys = std::collections::BTreeSet::new();
+        let mut pairs: Vec<(String, Value)> = Vec::with_capacity(capabilities.len());
+        for pair in &capabilities {
+            let key = pair["key"].as_str().unwrap_or_default().to_owned();
+            if key.is_empty() {
+                return Err(invalid("capability key must be a non-empty string"));
+            }
+            if !seen_keys.insert(key.clone()) {
+                return Err(invalid(format!("duplicate capability key `{key}`")));
+            }
+            pairs.push((key, pair.get("value").cloned().unwrap_or(Value::Null)));
         }
-        if !seen_keys.insert(key.clone()) {
-            return Err(invalid(format!("duplicate capability key `{key}`")).into());
-        }
-        pairs.push((key, pair.get("value").cloned().unwrap_or(Value::Null)));
-    }
 
-    let mut conn = store.conn.lock().expect("sqlite mutex");
-    let tx = conn.transaction().map_err(sql_err)?;
+        let mut conn = store_bg.conn.lock().map_err(|_| provider_mutex_err())?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sql_err)?;
 
-    // The operation must be one of ours (its evidence is what is being
-    // confirmed). Terminality is deliberately not required here — the
-    // contract's error list for this operation has no not-ready code, and
-    // every evidence row carries its own config binding which is checked
-    // below against the *current* configuration.
-    let op_type: Option<String> = tx
-        .query_row(
-            "SELECT operation_type FROM operations WHERE operation_id = ?1",
-            params![operation_id],
-            |r| r.get(0),
-        )
-        .optional()
-        .map_err(sql_err)?;
-    match op_type.as_deref() {
-        Some("provider_test.start") | Some("provider_test.retry") => {}
-        Some(other) => {
-            return Err(invalid(format!(
-                "operation `{operation_id}` is `{other}`, not a provider test operation"
-            ))
-            .into());
-        }
-        None => {
-            return Err(invalid(format!("operation `{operation_id}` not found")).into());
-        }
-    }
-
-    // Model CAS: 「陈旧版本不写」.
-    let model_row: Option<(String, String, i64, String, String)> = tx
-        .query_row(
-            "SELECT name, revision, enabled, declared_capabilities_json, capability_evidence_json
-             FROM v1_models WHERE provider_id = ?1 AND model_id = ?2",
-            params![provider_id, model_id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
-        )
-        .optional()
-        .map_err(sql_err)?;
-    let Some((name, model_revision, enabled, declared_raw, evidence_raw)) = model_row else {
-        return Err(ContractError::new(
-            CODE_REVISION_CONFLICT,
-            format!("model `{provider_id}/{model_id}` not found"),
-            RetrySpec::after_reconcile(),
-            EffectStatus::NotApplied,
-        )
-        .into());
-    };
-    if model_revision != expected_model_revision {
-        return Err(ContractError::new(
-            CODE_REVISION_CONFLICT,
-            format!(
-                "expectedModelRevision `{expected_model_revision}` does not match `{model_revision}`"
-            ),
-            RetrySpec::after_reconcile(),
-            EffectStatus::NotApplied,
-        )
-        .into());
-    }
-
-    // Current config digest: evidence must have been gathered against the
-    // provider's live (protocol, endpoint, credentialRef) and the same
-    // model （「证据必须同模型同配置」「变更endpoint/model/凭据后须重新确认」）.
-    let Some(provider) = load_tested_provider(&tx, &provider_id)? else {
-        return Err(
-            config_revision_conflict(format!("provider `{provider_id}` no longer exists")).into(),
-        );
-    };
-    let current_digest = provider_config_digest(
-        &provider.protocol,
-        &provider.endpoint,
-        provider.credential_ref.as_deref(),
-        Some(&model_id),
-    );
-
-    // Load and validate every cited evidence row.
-    let mut evidence: Vec<(String, bool)> = Vec::with_capacity(evidence_ids.len());
-    for evidence_id in &evidence_ids {
-        let row: Option<(String, Option<String>, String, String, i64)> = tx
+        let op_type: Option<String> = tx
             .query_row(
-                "SELECT provider_id, model_id, config_digest, kind, supported
-                 FROM v1_test_evidence WHERE evidence_id = ?1",
-                params![evidence_id],
+                "SELECT operation_type FROM operations WHERE operation_id = ?1",
+                params![operation_id],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(sql_err)?;
+        match op_type.as_deref() {
+            Some("provider_test.start") | Some("provider_test.retry") => {}
+            Some(other) => {
+                return Err(invalid(format!(
+                    "operation `{operation_id}` is `{other}`, not a provider test operation"
+                )));
+            }
+            None => {
+                return Err(invalid(format!("operation `{operation_id}` not found")));
+            }
+        }
+
+        // Model CAS: 「陈旧版本不写」.
+        let model_row: Option<(String, String, i64, String, String)> = tx
+            .query_row(
+                "SELECT name, revision, enabled, declared_capabilities_json, capability_evidence_json
+                 FROM v1_models WHERE provider_id = ?1 AND model_id = ?2",
+                params![provider_id, model_id],
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
             )
             .optional()
             .map_err(sql_err)?;
-        let Some((ev_provider, ev_model, ev_digest, kind, supported)) = row else {
+        let Some((name, model_revision, enabled, declared_raw, evidence_raw)) = model_row else {
             return Err(ContractError::new(
-                CODE_EVIDENCE_MISMATCH,
-                format!("evidence `{evidence_id}` does not exist"),
-                RetrySpec::never(),
+                CODE_REVISION_CONFLICT,
+                format!("model `{provider_id}/{model_id}` not found"),
+                RetrySpec::after_reconcile(),
                 EffectStatus::NotApplied,
-            )
-            .into());
+            ));
         };
-        if ev_provider != provider_id || ev_model.as_deref() != Some(model_id.as_str()) {
+        if model_revision != expected_model_revision {
             return Err(ContractError::new(
-                CODE_EVIDENCE_MISMATCH,
+                CODE_REVISION_CONFLICT,
                 format!(
-                    "evidence `{evidence_id}` was gathered for `{ev_provider}/{}`; the confirmation targets `{provider_id}/{model_id}`",
-                    ev_model.as_deref().unwrap_or_default()
+                    "expectedModelRevision `{expected_model_revision}` does not match `{model_revision}`"
                 ),
-                RetrySpec::never(),
+                RetrySpec::after_reconcile(),
                 EffectStatus::NotApplied,
-            )
-            .into());
+            ));
         }
-        if ev_digest != current_digest {
-            return Err(ContractError::new(
-                CODE_EVIDENCE_MISMATCH,
-                format!(
-                    "evidence `{evidence_id}` was gathered against a different configuration (endpoint/model/credential changed since); re-test before confirming"
-                ),
-                RetrySpec::never(),
-                EffectStatus::NotApplied,
-            )
-            .into());
-        }
-        evidence.push((kind, supported != 0));
-    }
 
-    // Capability ↔ evidence matching.
-    for (key, value) in &pairs {
-        let matching: Vec<bool> = evidence
-            .iter()
-            .filter(|(kind, _)| kind == key)
-            .map(|(_, supported)| *supported)
-            .collect();
-        if matching.is_empty() {
-            return Err(ContractError::new(
-                CODE_INSUFFICIENT_EVIDENCE,
-                format!(
-                    "capability `{key}` has no `{key}`-kind evidence; text-only success never establishes image capability"
-                ),
-                RetrySpec::never(),
-                EffectStatus::NotApplied,
-            )
-            .into());
-        }
-        // Boolean-shaped confirmations must agree with the evidence; other
-        // value shapes only require the evidence to exist (the contract's
-        // Pair value is a domain-typed JSON value).
-        let wants_supported = match value {
-            Value::Bool(want) => Some(*want),
-            Value::String(want) if want.as_str() == "supported" => Some(true),
-            Value::String(want) if want.as_str() == "unsupported" => Some(false),
-            _ => None,
+        let Some(provider) = load_tested_provider(&tx, &provider_id)? else {
+            return Err(config_revision_conflict(format!(
+                "provider `{provider_id}` no longer exists"
+            )));
         };
-        if let Some(want) = wants_supported
-            && !matching.contains(&want)
-        {
-            return Err(ContractError::new(
-                CODE_EVIDENCE_MISMATCH,
-                format!("evidence for `{key}` contradicts the confirmed value"),
-                RetrySpec::never(),
-                EffectStatus::NotApplied,
-            )
-            .into());
-        }
-    }
+        let current_digest = provider_config_digest(
+            &provider.protocol,
+            &provider.endpoint,
+            provider.credential_ref.as_deref(),
+            Some(&model_id),
+        );
 
-    // Merge the confirmed pairs into capabilityEvidence (upsert by key) and
-    // bump the model revision.
-    let mut evidence_pairs: Vec<Value> = serde_json::from_str(&evidence_raw).unwrap_or_default();
-    for (key, value) in &pairs {
-        if let Some(existing) = evidence_pairs
-            .iter_mut()
-            .find(|pair| pair["key"].as_str() == Some(key.as_str()))
-        {
-            if let Some(obj) = existing.as_object_mut() {
-                obj.insert("value".into(), value.clone());
+        // Load and validate every cited evidence row, including operation_id ownership.
+        let mut evidence: Vec<(String, bool)> = Vec::with_capacity(evidence_ids.len());
+        for evidence_id in &evidence_ids {
+            #[allow(clippy::type_complexity)]
+            let row: Option<(String, String, Option<String>, String, String, i64)> = tx
+                .query_row(
+                    "SELECT operation_id, provider_id, model_id, config_digest, kind, supported
+                     FROM v1_test_evidence WHERE evidence_id = ?1",
+                    params![evidence_id],
+                    |r| {
+                        Ok((
+                            r.get(0)?,
+                            r.get(1)?,
+                            r.get(2)?,
+                            r.get(3)?,
+                            r.get(4)?,
+                            r.get(5)?,
+                        ))
+                    },
+                )
+                .optional()
+                .map_err(sql_err)?;
+            let Some((ev_operation_id, ev_provider, ev_model, ev_digest, kind, supported)) = row
+            else {
+                return Err(ContractError::new(
+                    CODE_EVIDENCE_MISMATCH,
+                    format!("evidence `{evidence_id}` does not exist"),
+                    RetrySpec::never(),
+                    EffectStatus::NotApplied,
+                ));
+            };
+            if ev_operation_id != operation_id {
+                return Err(ContractError::new(
+                    CODE_EVIDENCE_MISMATCH,
+                    format!(
+                        "evidence `{evidence_id}` belongs to operation `{ev_operation_id}`, not `{operation_id}`"
+                    ),
+                    RetrySpec::never(),
+                    EffectStatus::NotApplied,
+                ));
             }
-        } else {
-            evidence_pairs.push(json!({"key": key, "value": value}));
+            if ev_provider != provider_id || ev_model.as_deref() != Some(model_id.as_str()) {
+                return Err(ContractError::new(
+                    CODE_EVIDENCE_MISMATCH,
+                    format!(
+                        "evidence `{evidence_id}` was gathered for `{ev_provider}/{}`; the confirmation targets `{provider_id}/{model_id}`",
+                        ev_model.as_deref().unwrap_or_default()
+                    ),
+                    RetrySpec::never(),
+                    EffectStatus::NotApplied,
+                ));
+            }
+            if ev_digest != current_digest {
+                return Err(ContractError::new(
+                    CODE_EVIDENCE_MISMATCH,
+                    "evidence was gathered against a different configuration (endpoint/model/credential changed since); re-test before confirming",
+                    RetrySpec::never(),
+                    EffectStatus::NotApplied,
+                ));
+            }
+            evidence.push((kind, supported != 0));
         }
-    }
-    let new_rev = next_rev_in_tx(&tx)?;
-    let now = now_rfc3339();
-    tx.execute(
-        "UPDATE v1_models
-         SET capability_evidence_json = ?1, revision = ?2, updated_at = ?3
-         WHERE provider_id = ?4 AND model_id = ?5",
-        params![
-            serde_json::to_string(&evidence_pairs).unwrap_or_else(|_| "[]".into()),
-            new_rev,
-            now,
-            provider_id,
-            model_id,
-        ],
-    )
-    .map_err(sql_err)?;
-    tx.commit().map_err(sql_err)?;
-    drop(conn);
-    store.event_notifier().notify_waiters();
 
-    Ok((
-        ResponseOutcome::Succeeded,
-        json!({"model": {
+        // Capability <-> evidence matching: disallow missing evidence, internal
+        // contradictions, and non-boolean/ambiguous capability value bypasses.
+        for (key, value) in &pairs {
+            let matching: Vec<bool> = evidence
+                .iter()
+                .filter(|(kind, _)| kind == key)
+                .map(|(_, supported)| *supported)
+                .collect();
+            if matching.is_empty() {
+                return Err(ContractError::new(
+                    CODE_INSUFFICIENT_EVIDENCE,
+                    format!(
+                        "capability `{key}` has no `{key}`-kind evidence; text-only success never establishes image capability"
+                    ),
+                    RetrySpec::never(),
+                    EffectStatus::NotApplied,
+                ));
+            }
+            if matching.contains(&true) && matching.contains(&false) {
+                return Err(ContractError::new(
+                    CODE_EVIDENCE_MISMATCH,
+                    format!("cited evidence for `{key}` contains contradictory results"),
+                    RetrySpec::never(),
+                    EffectStatus::NotApplied,
+                ));
+            }
+            let ev_supported = matching[0];
+            let wants_supported = match value {
+                Value::Bool(want) => Some(*want),
+                Value::String(want) if want.as_str() == "supported" => Some(true),
+                Value::String(want) if want.as_str() == "unsupported" => Some(false),
+                _ => None,
+            };
+            match wants_supported {
+                Some(want) if want == ev_supported => {}
+                Some(_) => {
+                    return Err(ContractError::new(
+                        CODE_EVIDENCE_MISMATCH,
+                        format!("evidence for `{key}` contradicts the confirmed value"),
+                        RetrySpec::never(),
+                        EffectStatus::NotApplied,
+                    ));
+                }
+                None => {
+                    return Err(ContractError::new(
+                        CODE_EVIDENCE_MISMATCH,
+                        format!(
+                            "capability confirmation for `{key}` must be a boolean or `supported`/`unsupported` matching gathered evidence"
+                        ),
+                        RetrySpec::never(),
+                        EffectStatus::NotApplied,
+                    ));
+                }
+            }
+        }
+
+        let mut evidence_pairs: Vec<Value> = serde_json::from_str(&evidence_raw).unwrap_or_default();
+        for (key, value) in &pairs {
+            if let Some(existing) = evidence_pairs
+                .iter_mut()
+                .find(|pair| pair["key"].as_str() == Some(key.as_str()))
+            {
+                if let Some(obj) = existing.as_object_mut() {
+                    obj.insert("value".into(), value.clone());
+                }
+            } else {
+                evidence_pairs.push(json!({"key": key, "value": value}));
+            }
+        }
+        let new_rev = next_rev_in_tx(&tx)?;
+        let now = now_rfc3339();
+        tx.execute(
+            "UPDATE v1_models
+             SET capability_evidence_json = ?1, revision = ?2, updated_at = ?3
+             WHERE provider_id = ?4 AND model_id = ?5",
+            params![
+                serde_json::to_string(&evidence_pairs).unwrap_or_else(|_| "[]".into()),
+                new_rev,
+                now,
+                provider_id,
+                model_id,
+            ],
+        )
+        .map_err(sql_err)?;
+        tx.commit().map_err(sql_err)?;
+
+        Ok(json!({"model": {
             "reference": {"providerId": provider_id, "modelId": model_id},
             "name": name,
             "enabled": enabled != 0,
             "revision": new_rev,
             "capabilities": serde_json::from_str::<Value>(&declared_raw).unwrap_or(json!([])),
             "capabilityEvidence": Value::Array(evidence_pairs),
-        }}),
-    ))
+        }}))
+    })
+    .await
+    .map_err(|_| DispatchError::from(provider_mutex_err()))?
+    .map_err(DispatchError::from)?;
+    store.event_notifier().notify_waiters();
+    Ok((ResponseOutcome::Succeeded, body))
 }
 
 // ---------------------------------------------------------------------------
@@ -3417,5 +3719,310 @@ mod tests {
         assert_eq!(strip_thinking("a<think\u{3e}unterminated"), "a");
         assert_eq!(strip_thinking("plain"), "plain");
         assert_eq!(strip_thinking("  padded  "), "padded");
+    }
+
+    #[tokio::test]
+    async fn ssrf_blocks_metadata_private_link_local_and_plaintext_creds_while_allowing_loopback() {
+        // Blocked destinations: AWS/cloud metadata, RFC1918, ULA, link-local,
+        // unspecified, IPv4-mapped metadata.
+        for bad_ip in [
+            "169.254.169.254",
+            "10.0.0.1",
+            "172.16.0.1",
+            "192.168.1.1",
+            "100.64.0.1",
+            "0.0.0.0",
+            "fd00:ec2::254",
+            "fe80::1",
+            "::",
+            "::ffff:169.254.169.254",
+            "::ffff:10.0.0.1",
+        ] {
+            let addr: IpAddr = bad_ip.parse().unwrap();
+            assert!(
+                !is_allowed_probe_ip(addr),
+                "expected {bad_ip} to be blocked"
+            );
+        }
+        // Allowed public & loopback IPs.
+        for ok_ip in ["127.0.0.1", "::1", "8.8.8.8"] {
+            let addr: IpAddr = ok_ip.parse().unwrap();
+            assert!(is_allowed_probe_ip(addr), "expected {ok_ip} to be allowed");
+        }
+
+        // Plaintext HTTP with credentials is refused for non-loopback targets,
+        // while loopback http://127.0.0.1 and http://localhost stay allowed.
+        let non_loopback_http: hyper::Uri = "http://8.8.8.8/v1/chat/completions".parse().unwrap();
+        assert!(
+            resolve_and_validate_probe_addrs(&non_loopback_http, true)
+                .await
+                .is_err()
+        );
+        assert!(
+            resolve_and_validate_probe_addrs(&non_loopback_http, false)
+                .await
+                .is_ok()
+        );
+
+        let loopback_http: hyper::Uri =
+            "http://127.0.0.1:8080/v1/chat/completions".parse().unwrap();
+        assert!(
+            resolve_and_validate_probe_addrs(&loopback_http, true)
+                .await
+                .is_ok()
+        );
+
+        let metadata_uri: hyper::Uri = "http://169.254.169.254/latest/meta-data/".parse().unwrap();
+        assert!(
+            resolve_and_validate_probe_addrs(&metadata_uri, false)
+                .await
+                .is_err()
+        );
+
+        let ipv6_metadata: hyper::Uri = "http://[fd00:ec2::254]/latest/meta-data/".parse().unwrap();
+        assert!(
+            resolve_and_validate_probe_addrs(&ipv6_metadata, false)
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn response_detail_redacts_secrets_and_suppresses_non_json_oracle() {
+        let json_body =
+            br#"{"error":{"message":"Incorrect API key provided: sk-secret-inline-9999"}}"#;
+        let sanitized = response_detail(json_body, 401, Some("my-raw-cred"));
+        assert!(!sanitized.contains("sk-secret-inline-9999"));
+        assert!(sanitized.contains("[REDACTED]"));
+
+        let custom_secret_body = br#"{"message":"bad token secret-xyz-123"}"#;
+        let sanitized2 = response_detail(custom_secret_body, 401, Some("secret-xyz-123"));
+        assert!(!sanitized2.contains("secret-xyz-123"));
+
+        let html_banner = b"<html><body>Internal Admin Metadata Token=12345</body></html>";
+        let sanitized_html = response_detail(html_banner, 502, None);
+        assert!(!sanitized_html.contains("Internal Admin Metadata"));
+        assert_eq!(sanitized_html, "HTTP 502 error response");
+    }
+
+    #[tokio::test]
+    async fn send_probe_request_caps_body_at_64_kib_and_clamps_timeout() {
+        use std::io::Write;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 1024];
+                let _ = std::io::Read::read(&mut stream, &mut buf);
+                let big = "a".repeat(80 * 1024);
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{big}",
+                    big.len()
+                );
+                let _ = stream.write_all(resp.as_bytes());
+            }
+        });
+        let url = format!("http://127.0.0.1:{port}/v1/chat/completions");
+        let err = send_probe_request(&url, &[], &json!({}), 999_999_999, true)
+            .await
+            .unwrap_err();
+        assert!(
+            err.contains("65536"),
+            "expected 64 KiB cap error, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn confirm_capabilities_rejects_foreign_op_contradictory_or_bypass_values() {
+        let (_tmp, rt, iid) = fresh_home("pt-confirm-guards");
+        rt.dispatch(
+            "provider.write",
+            json!({
+                "instanceId": iid,
+                "providerId": "prov-g",
+                "name": "g",
+                "protocol": "openai",
+                "endpoint": "https://api.example.com/v1",
+            }),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let (_, model) = rt
+            .dispatch(
+                "model.write",
+                json!({
+                    "instanceId": iid,
+                    "model": {"providerId": "prov-g", "modelId": "m-g"},
+                    "name": "m-g",
+                }),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let model_rev = model["model"]["revision"].as_str().unwrap().to_owned();
+        let (op_a, _) = rt
+            .store()
+            .begin_long_operation("provider_test.start", &json!({"kind": "instance"}), true)
+            .unwrap();
+        let (op_b, _) = rt
+            .store()
+            .begin_long_operation("provider_test.start", &json!({"kind": "instance"}), true)
+            .unwrap();
+        let digest =
+            provider_config_digest("openai", "https://api.example.com/v1", None, Some("m-g"));
+        {
+            let conn = rt.store().conn.lock().unwrap();
+            let now = now_rfc3339();
+            conn.execute(
+                "INSERT INTO v1_test_evidence (evidence_id, operation_id, target_id, provider_id, model_id, config_digest, kind, supported, created_at)
+                 VALUES ('ev-b-false', ?1, 't-1', 'prov-g', 'm-g', ?2, 'image', 0, ?3),
+                        ('ev-a-true', ?4, 't-1', 'prov-g', 'm-g', ?2, 'image', 1, ?3),
+                        ('ev-a-false', ?4, 't-1', 'prov-g', 'm-g', ?2, 'image', 0, ?3)",
+                params![op_b, digest, now, op_a],
+            )
+            .unwrap();
+        }
+
+        // 1. Citing evidence from op_b under op_a must fail with EVIDENCE_MISMATCH.
+        let err = rt
+            .dispatch(
+                "provider_test.confirm_capabilities",
+                json!({
+                    "instanceId": iid,
+                    "operationId": op_a,
+                    "model": {"providerId": "prov-g", "modelId": "m-g"},
+                    "expectedModelRevision": model_rev,
+                    "evidenceIds": ["ev-b-false"],
+                    "capabilities": [{"key": "image", "value": false}],
+                }),
+                None,
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(contract_code_of(&err), CODE_EVIDENCE_MISMATCH);
+
+        // 2. Contradictory [true, false] evidence under op_a must fail with EVIDENCE_MISMATCH.
+        let err = rt
+            .dispatch(
+                "provider_test.confirm_capabilities",
+                json!({
+                    "instanceId": iid,
+                    "operationId": op_a,
+                    "model": {"providerId": "prov-g", "modelId": "m-g"},
+                    "expectedModelRevision": model_rev,
+                    "evidenceIds": ["ev-a-true", "ev-a-false"],
+                    "capabilities": [{"key": "image", "value": true}],
+                }),
+                None,
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(contract_code_of(&err), CODE_EVIDENCE_MISMATCH);
+
+        // 3. Non-boolean object `{"supported": true}` cannot bypass negative evidence.
+        let err = rt
+            .dispatch(
+                "provider_test.confirm_capabilities",
+                json!({
+                    "instanceId": iid,
+                    "operationId": op_b,
+                    "model": {"providerId": "prov-g", "modelId": "m-g"},
+                    "expectedModelRevision": model_rev,
+                    "evidenceIds": ["ev-b-false"],
+                    "capabilities": [{"key": "image", "value": {"supported": true}}],
+                }),
+                None,
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(contract_code_of(&err), CODE_EVIDENCE_MISMATCH);
+    }
+
+    #[tokio::test]
+    async fn retryable_source_not_terminal_does_not_poison_idempotency_key() {
+        let (_tmp, rt, iid) = fresh_home("pt-retry-poison");
+        let (_, prov) = rt
+            .dispatch(
+                "provider.write",
+                json!({
+                    "instanceId": iid,
+                    "providerId": "prov-r",
+                    "name": "r",
+                    "protocol": "openai",
+                    "endpoint": "https://api.example.com/v1",
+                }),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let rev = prov["provider"]["revision"].as_str().unwrap().to_owned();
+        let (src_op_id, _) = rt
+            .store()
+            .begin_long_operation("provider_test.start", &json!({"kind": "instance"}), true)
+            .unwrap();
+        {
+            let target = AcceptedTarget {
+                target_id: "t-r".to_owned(),
+                provider_id: "prov-r".to_owned(),
+                model_id: None,
+                protocol: "openai".to_owned(),
+                endpoint: "https://api.example.com/v1".to_owned(),
+                config_revision: rev,
+                config_digest: provider_config_digest(
+                    "openai",
+                    "https://api.example.com/v1",
+                    None,
+                    None,
+                ),
+                credential_ref: None,
+                test_kinds: vec!["text".to_owned()],
+            };
+            insert_target_rows(rt.store(), &src_op_id, None, &[target]).unwrap();
+        }
+
+        // First call while source op is non-terminal -> SOURCE_NOT_TERMINAL.
+        let input = json!({
+            "instanceId": iid,
+            "sourceOperationId": src_op_id,
+            "targetIds": ["t-r"],
+            "probeMode": "validateOnly",
+        });
+        let err = rt
+            .dispatch(
+                "provider_test.retry",
+                input.clone(),
+                Some("key-retry-r1"),
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(contract_code_of(&err), CODE_SOURCE_NOT_TERMINAL);
+
+        // Mark source target failed and finish source operation.
+        update_target_outcome(rt.store(), &src_op_id, "t-r", "failed", 1, &[], &[]).unwrap();
+        rt.store()
+            .finish_long_operation(
+                &src_op_id,
+                LongOperationOutcome::Succeeded {
+                    result: json!({"partial": true}),
+                    result_schema_id: None,
+                },
+            )
+            .unwrap();
+
+        // Replaying with the EXACT SAME idempotencyKey must now succeed (not poisoned)!
+        let (outcome, receipt) = rt
+            .dispatch("provider_test.retry", input, Some("key-retry-r1"), None)
+            .await
+            .unwrap();
+        assert_eq!(outcome, ResponseOutcome::Accepted);
+        assert_eq!(receipt["kind"], "operation");
     }
 }

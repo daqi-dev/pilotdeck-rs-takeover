@@ -38,26 +38,31 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
-use agentcpm_pd_protocol::contract::ResponseOutcome;
-use agentcpm_pd_protocol::errors::{ContractError, EffectStatus, RetrySpec};
-use rusqlite::{Connection, OptionalExtension, params};
+use agentcpm_pd_protocol::contract::{ResponseOutcome, RunState};
+use agentcpm_pd_protocol::envelope::compute_input_digest;
+use agentcpm_pd_protocol::errors::{
+    CODE_IDEMPOTENCY_CONFLICT, CODE_UNAVAILABLE, ContractError, EffectStatus, RetryMode, RetrySpec,
+};
+use chrono::Utc;
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde_json::{Value, json};
 use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
 
 use crate::public_v1::domains::DomainRegistry;
 use crate::public_v1::domains::artifacts::{publish_artifact, read_artifact_bytes};
 use crate::public_v1::domains::automation::{
-    self, CODE_VIRTUAL_PROJECT, CODE_WORKSPACE_UNAVAILABLE, PlanRow, accept_operation,
-    current_automation_rev, domain_db, domain_not_found, ensure_session, parse_limit,
-    parse_offset_cursor, plan_empty, plan_row, plans_for_project, resource_busy, revision_conflict,
-    set_plan_execution, sql_err, submit_text_run, wait_run_terminal,
+    self, CODE_VIRTUAL_PROJECT, CODE_WORKSPACE_UNAVAILABLE, PlanRow, cancel_run_and_signal,
+    current_automation_rev, domain_not_found, ensure_session, parse_limit, parse_offset_cursor,
+    plan_empty, plan_row, plans_for_project, resource_busy, revision_conflict, set_plan_execution,
+    sql_err, submit_text_run,
 };
 use crate::public_v1::domains::files::{ProjectResolveError, resolve_project};
-use crate::public_v1::domains::schedules::{
-    DomainDb, finish_domain_operation, mark_domain_operation_running,
-};
+use crate::public_v1::domains::operations_ops::LongOperationOutcome;
 use crate::public_v1::runtime::{DispatchError, PublicV1Runtime};
-use crate::public_v1::store::{StoredRun, now_rfc3339, run_state_str};
+use crate::public_v1::store::{StoredRun, V1Store, format_cursor, now_rfc3339, run_state_str};
+
+const METHOD_ID_EXECUTE: &str = "discovery.execute";
+const OPERATION_EVENT_SCHEMA: &str = "agentcpm-pd.operation.event/1";
 
 pub(crate) const DDL_DISCOVERY_EXECUTIONS: &str =
     "CREATE TABLE IF NOT EXISTS v1_discovery_executions (
@@ -97,8 +102,43 @@ pub(super) fn register(reg: &mut DomainRegistry) {
 // 工作区解析（错误码按各操作错误表映射）
 // ---------------------------------------------------------------------------
 
+fn discovery_mutex_err() -> ContractError {
+    ContractError::new(
+        CODE_UNAVAILABLE,
+        "sqlite store mutex poisoned",
+        RetrySpec::backoff_read(Some(250)),
+        EffectStatus::Unknown,
+    )
+}
+
+/// Startup recovery hook for `store.rs::sync_meta_and_recover`: marks any
+/// orphaned `queued`/`running` discovery executions as `interrupted` and
+/// returns their `v1_automation_plans` rows to `ready` so plans are never
+/// permanently deadlocked behind `RESOURCE_BUSY` after a gateway restart.
+#[allow(dead_code)]
+pub(crate) fn recover_orphaned_discovery_executions(
+    conn: &Connection,
+    now: &str,
+) -> rusqlite::Result<usize> {
+    let updated = conn.execute(
+        "UPDATE v1_discovery_executions
+         SET state = 'interrupted',
+             error_code = COALESCE(error_code, 'GATEWAY_RESTARTED'),
+             updated_at = ?1
+         WHERE state IN ('queued', 'running')",
+        params![now],
+    )?;
+    conn.execute(
+        "UPDATE v1_automation_plans
+         SET state = 'ready', updated_at = ?1
+         WHERE state = 'running'",
+        params![now],
+    )?;
+    Ok(updated)
+}
+
 fn project_row_exists(rt: &Arc<PublicV1Runtime>, project_id: &str) -> Result<bool, ContractError> {
-    let conn = rt.store().conn.lock().expect("sqlite mutex");
+    let conn = rt.store().conn.lock().map_err(|_| discovery_mutex_err())?;
     let exists: Option<i64> = conn
         .query_row(
             "SELECT 1 FROM projects WHERE project_id = ?1",
@@ -378,18 +418,33 @@ async fn discovery_get_context(
     input: Value,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
     let project_id = input["projectId"].as_str().unwrap_or_default().to_owned();
-    let workspace = resolve_real_workspace(&rt, &project_id)?;
+    let rt_ws = Arc::clone(&rt);
+    let pid_ws = project_id.clone();
+    let workspace = tokio::task::spawn_blocking(move || resolve_real_workspace(&rt_ws, &pid_ws))
+        .await
+        .map_err(|_| DispatchError::from(discovery_mutex_err()))?
+        .map_err(DispatchError::from)?;
     let signals = collect_workspace_signals(&workspace).await;
-    let (revision, active_plan_ids) = {
-        let conn = rt.store().conn.lock().expect("sqlite mutex");
-        let revision = current_automation_rev(&conn)?;
-        let active = plans_for_project(&conn, &project_id)?
-            .into_iter()
-            .filter(|plan| plan.state == "ready" || plan.state == "running")
-            .map(|plan| plan.plan_id)
-            .collect::<Vec<_>>();
-        (revision, active)
-    };
+    let rt_q = Arc::clone(&rt);
+    let pid_q = project_id.clone();
+    let (revision, active_plan_ids) =
+        tokio::task::spawn_blocking(move || -> Result<(String, Vec<String>), ContractError> {
+            let conn = rt_q
+                .store()
+                .conn
+                .lock()
+                .map_err(|_| discovery_mutex_err())?;
+            let revision = current_automation_rev(&conn)?;
+            let active = plans_for_project(&conn, &pid_q)?
+                .into_iter()
+                .filter(|plan| plan.state == "ready" || plan.state == "running")
+                .map(|plan| plan.plan_id)
+                .collect::<Vec<_>>();
+            Ok((revision, active))
+        })
+        .await
+        .map_err(|_| DispatchError::from(discovery_mutex_err()))?
+        .map_err(DispatchError::from)?;
     Ok((
         ResponseOutcome::Succeeded,
         json!({
@@ -410,50 +465,58 @@ async fn discovery_list_plans(
     rt: Arc<PublicV1Runtime>,
     input: Value,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
-    let project_id = input["projectId"].as_str().unwrap_or_default().to_owned();
-    let plan_filter = input
-        .get("planId")
-        .and_then(Value::as_str)
-        .filter(|s| !s.is_empty())
-        .map(ToOwned::to_owned);
-    require_real_project(&rt, &project_id)?;
-    let cursor = parse_offset_cursor(input.get("cursor").and_then(Value::as_str), "dp")?;
-    let limit = parse_limit(&input);
+    let rt_bg = Arc::clone(&rt);
+    let body = tokio::task::spawn_blocking(move || -> Result<Value, ContractError> {
+        let project_id = input["projectId"].as_str().unwrap_or_default().to_owned();
+        let plan_filter = input
+            .get("planId")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(ToOwned::to_owned);
+        require_real_project(&rt_bg, &project_id)?;
+        let cursor = parse_offset_cursor(input.get("cursor").and_then(Value::as_str), "dp-")?;
+        let limit = parse_limit(&input);
 
-    let (mut plans, snapshot_revision) = {
-        let conn = rt.store().conn.lock().expect("sqlite mutex");
-        (
-            plans_for_project(&conn, &project_id)?,
-            current_automation_rev(&conn)?,
-        )
-    };
-    if let Some(plan_id) = &plan_filter {
-        plans.retain(|plan| &plan.plan_id == plan_id);
-    }
-    let mut next_cursor = None;
-    let mut items = Vec::new();
-    for (index, plan) in plans.iter().enumerate().skip(cursor) {
-        if items.len() >= limit {
-            next_cursor = Some(format!("dp-{index}"));
-            break;
+        let (mut plans, snapshot_revision) = {
+            let conn = rt_bg
+                .store()
+                .conn
+                .lock()
+                .map_err(|_| discovery_mutex_err())?;
+            (
+                plans_for_project(&conn, &project_id)?,
+                current_automation_rev(&conn)?,
+            )
+        };
+        if let Some(plan_id) = &plan_filter {
+            plans.retain(|plan| &plan.plan_id == plan_id);
         }
-        items.push(json!({
-            "planId": plan.plan_id,
-            "revision": plan.revision,
-            "title": plan.title,
-            "content": plan.content,
-            "state": plan.state,
-            "lastRunId": plan.last_run_id,
-        }));
-    }
-    Ok((
-        ResponseOutcome::Succeeded,
-        json!({
+        let mut next_cursor = None;
+        let mut items = Vec::new();
+        for (index, plan) in plans.iter().enumerate().skip(cursor) {
+            if items.len() >= limit {
+                next_cursor = Some(format!("dp-{index}"));
+                break;
+            }
+            items.push(json!({
+                "planId": plan.plan_id,
+                "revision": plan.revision,
+                "title": plan.title,
+                "content": plan.content,
+                "state": plan.state,
+                "lastRunId": plan.last_run_id,
+            }));
+        }
+        Ok(json!({
             "items": items,
             "nextCursor": next_cursor,
             "snapshotRevision": snapshot_revision,
-        }),
-    ))
+        }))
+    })
+    .await
+    .map_err(|_| DispatchError::from(discovery_mutex_err()))?
+    .map_err(DispatchError::from)?;
+    Ok((ResponseOutcome::Succeeded, body))
 }
 
 // ---------------------------------------------------------------------------
@@ -467,115 +530,326 @@ struct DiscoveryRequest {
     plan: PlanRow,
 }
 
-/// 受理快照构建：计划存在 + 版本匹配（重放在 accept 内先行，不受计划后
-/// 续变化影响）。
-fn build_discovery_request(
-    rt: &Arc<PublicV1Runtime>,
-    project_id: &str,
-    plan_id: &str,
-    expected_revision: &str,
-) -> Result<DiscoveryRequest, ContractError> {
-    let conn = rt.store().conn.lock().expect("sqlite mutex");
-    let plan =
-        plan_row(&conn, project_id, plan_id)?.ok_or_else(|| domain_not_found("plan", plan_id))?;
-    if expected_revision != plan.revision {
-        return Err(revision_conflict(format!(
-            "expectedRevision `{expected_revision}` does not match plan revision `{}`",
-            plan.revision
-        )));
-    }
-    Ok(DiscoveryRequest {
-        session_id: format!("s-disc-{project_id}-{plan_id}"),
-        project_id: project_id.to_owned(),
-        plan,
-    })
+fn next_op_rev_in_tx(conn: &Connection) -> Result<String, ContractError> {
+    let next: i64 = conn
+        .query_row(
+            "SELECT COALESCE(CAST(value AS INTEGER), 0) + 1 FROM meta WHERE key = 'rev_counter'",
+            [],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(sql_err)?
+        .unwrap_or(1);
+    conn.execute(
+        "INSERT INTO meta (key, value) VALUES ('rev_counter', ?1)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        params![next.to_string()],
+    )
+    .map_err(sql_err)?;
+    Ok(format!("rev-{next:08}"))
 }
 
-fn validate_discovery_execution(
-    rt: &Arc<PublicV1Runtime>,
-    request: &DiscoveryRequest,
+fn insert_long_operation_in_tx(
+    tx: &Connection,
+    store: &V1Store,
+    operation_type: &str,
+    project_id: &str,
+) -> Result<(String, String), ContractError> {
+    let operation_id = store.next_id();
+    let rev = next_op_rev_in_tx(tx)?;
+    let now = now_rfc3339();
+    tx.execute(
+        "INSERT INTO operations (operation_id, operation_type, scope_kind, project_id, session_id,
+            state, revision, cancel_requested, cancellable, effect_status, progress_json,
+            created_at, updated_at)
+         VALUES (?1, ?2, 'project', ?3, NULL, 'queued', ?4, 0, 1, 'known', '[]', ?5, ?5)",
+        params![operation_id, operation_type, project_id, rev, now],
+    )
+    .map_err(sql_err)?;
+    let placeholder = format!("tmp-op-{operation_id}-q");
+    let payload = serde_json::to_string(&json!({
+        "operationId": operation_id,
+        "operationType": operation_type,
+    }))
+    .unwrap_or_else(|_| "{}".into());
+    tx.execute(
+        "INSERT INTO events (cursor, resource_id, session_id, event_type, schema_id, payload_json, data_json, occurred_at)
+         VALUES (?1, ?2, '', 'operation.queued', ?3, ?4, ?4, ?5)",
+        params![placeholder, operation_id, OPERATION_EVENT_SCHEMA, payload, now],
+    )
+    .map_err(sql_err)?;
+    let seq = tx.last_insert_rowid();
+    tx.execute(
+        "UPDATE events SET cursor = ?1 WHERE seq = ?2",
+        params![format_cursor(seq), seq],
+    )
+    .map_err(sql_err)?;
+    Ok((operation_id, rev))
+}
+
+fn check_execute_idempotency_in_tx(
+    tx: &Connection,
+    key: &str,
+    digest: &str,
+) -> Result<Option<Value>, ContractError> {
+    let existing: Option<(String, Option<String>, Option<String>)> = tx
+        .query_row(
+            "SELECT input_digest, receipt_json, rejection_code
+             FROM idempotency_records WHERE idempotency_key = ?1 AND method_id = ?2",
+            params![key, METHOD_ID_EXECUTE],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .optional()
+        .map_err(sql_err)?;
+    match existing {
+        None => Ok(None),
+        Some((stored_digest, receipt_json, rejection)) => {
+            if stored_digest != digest {
+                return Err(ContractError::new(
+                    CODE_IDEMPOTENCY_CONFLICT,
+                    format!(
+                        "idempotencyKey `{key}` already used for {METHOD_ID_EXECUTE} with different input"
+                    ),
+                    RetrySpec::never(),
+                    EffectStatus::NotApplied,
+                ));
+            }
+            if let Some(code) = rejection {
+                return Err(ContractError::new(
+                    code,
+                    "request previously rejected definitively",
+                    RetrySpec::never(),
+                    EffectStatus::NotApplied,
+                ));
+            }
+            match receipt_json.and_then(|raw| serde_json::from_str::<Value>(&raw).ok()) {
+                Some(mut receipt) => {
+                    if let Some(obj) = receipt.as_object_mut() {
+                        obj.insert("deduplicated".into(), json!(true));
+                    }
+                    Ok(Some(receipt))
+                }
+                None => Ok(None),
+            }
+        }
+    }
+}
+
+fn record_execute_acceptance_in_tx(
+    tx: &Connection,
+    key: &str,
+    digest: &str,
+    resource: &Value,
+    receipt: &Value,
 ) -> Result<(), ContractError> {
-    resolve_real_workspace(rt, &request.project_id)?;
-    let conn = rt.store().conn.lock().expect("sqlite mutex");
-    let current = plan_row(&conn, &request.project_id, &request.plan.plan_id)?
-        .ok_or_else(|| domain_not_found("plan", &request.plan.plan_id))?;
-    if current.revision != request.plan.revision {
-        return Err(revision_conflict(format!(
-            "expectedRevision `{}` does not match plan revision `{}`",
-            request.plan.revision, current.revision
-        )));
-    }
-    if current.content.trim().is_empty() {
-        return Err(plan_empty(&request.plan.plan_id));
-    }
-    if execution_in_flight(&conn, &request.project_id, &request.plan.plan_id) {
-        return Err(resource_busy(format!(
-            "plan `{}` already has an in-flight execution",
-            request.plan.plan_id
-        )));
-    }
+    let now = now_rfc3339();
+    let retained = (Utc::now() + chrono::Duration::days(7)).to_rfc3339();
+    tx.execute(
+        "INSERT INTO idempotency_records (idempotency_key, method_id, input_digest, request_state, reason, resource_json, receipt_json, rejection_code, observed_at, retained_until, retry_disposition)
+         VALUES (?1, ?2, ?3, 'accepted', 'receiptFound', ?4, ?5, NULL, ?6, ?7, 'doNotReplay')",
+        params![
+            key,
+            METHOD_ID_EXECUTE,
+            digest,
+            serde_json::to_string(resource).unwrap_or_default(),
+            serde_json::to_string(receipt).unwrap_or_default(),
+            now,
+            retained,
+        ],
+    )
+    .map_err(sql_err)?;
     Ok(())
 }
 
-/// worker 失败收尾：执行行置 failed + 操作行置 failed（完成结果仍带完整
-/// 字段，错误码进 `error`）。
-fn finish_discovery_failure(
+fn record_execute_rejection_in_tx(
+    tx: &Connection,
+    key: &str,
+    digest: &str,
+    code: &str,
+) -> Result<(), ContractError> {
+    let now = now_rfc3339();
+    let retained = (Utc::now() + chrono::Duration::days(7)).to_rfc3339();
+    tx.execute(
+        "INSERT OR IGNORE INTO idempotency_records (idempotency_key, method_id, input_digest, request_state, reason, resource_json, receipt_json, rejection_code, observed_at, retained_until, retry_disposition)
+         VALUES (?1, ?2, ?3, 'notAccepted', 'definitivelyRejected', NULL, NULL, ?4, ?5, ?6, 'correctRejectedInputWithNewKey')",
+        params![key, METHOD_ID_EXECUTE, digest, code, now, retained],
+    )
+    .map_err(sql_err)?;
+    Ok(())
+}
+
+fn update_execute_receipt_state(store: &V1Store, key: Option<&str>, state: &str) {
+    let Some(key) = key else {
+        return;
+    };
+    let Ok(conn) = store.conn.lock() else {
+        return;
+    };
+    let Ok(raw) = conn.query_row(
+        "SELECT receipt_json FROM idempotency_records WHERE idempotency_key = ?1 AND method_id = ?2",
+        params![key, METHOD_ID_EXECUTE],
+        |r| r.get::<_, String>(0),
+    ) else {
+        return;
+    };
+    if let Ok(mut receipt) = serde_json::from_str::<Value>(&raw)
+        && let Some(obj) = receipt.as_object_mut()
+    {
+        obj.insert("state".to_owned(), json!(state));
+        let _ = conn.execute(
+            "UPDATE idempotency_records SET receipt_json = ?1
+             WHERE idempotency_key = ?2 AND method_id = ?3",
+            params![
+                serde_json::to_string(&receipt).unwrap_or(raw),
+                key,
+                METHOD_ID_EXECUTE
+            ],
+        );
+    }
+}
+
+fn reset_plan_ready_in_conn(
+    conn: &Connection,
+    project_id: &str,
+    plan_id: &str,
+    run_id: Option<&str>,
+) {
+    if let Some(rid) = run_id {
+        let _ = set_plan_execution(conn, project_id, plan_id, rid, "ready");
+    } else {
+        let _ = conn.execute(
+            "UPDATE v1_automation_plans SET state = 'ready', updated_at = ?3
+             WHERE project_id = ?1 AND plan_id = ?2",
+            params![project_id, plan_id, now_rfc3339()],
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn finish_discovery_terminal(
     rt: &Arc<PublicV1Runtime>,
-    db: &Arc<DomainDb>,
     operation_id: &str,
     execution_id: &str,
     request: &DiscoveryRequest,
+    exec_state: &str,
     run_id: Option<&str>,
-    error: &ContractError,
+    error_code: Option<&str>,
+    op_outcome: LongOperationOutcome,
+    receipt_state: &str,
+    idempotency_key: Option<&str>,
 ) {
     {
-        let conn = rt.store().conn.lock().expect("sqlite mutex");
-        fail_execution(
-            &conn,
-            execution_id,
-            &request.project_id,
-            &request.plan,
-            &request.session_id,
-            run_id,
-            &error.code,
-        );
+        if let Ok(conn) = rt.store().conn.lock() {
+            if exec_state == "failed" && error_code.is_some() {
+                fail_execution(
+                    &conn,
+                    execution_id,
+                    &request.project_id,
+                    &request.plan,
+                    &request.session_id,
+                    run_id,
+                    error_code.unwrap_or("FAILED"),
+                );
+            } else {
+                let _ = update_execution(&conn, execution_id, run_id, exec_state, error_code);
+            }
+            reset_plan_ready_in_conn(&conn, &request.project_id, &request.plan.plan_id, run_id);
+        }
     }
-    let completion = json!({
-        "projectId": request.project_id,
-        "planId": request.plan.plan_id,
-        "planRevision": request.plan.revision,
-        "executionId": execution_id,
-        // completionResult 的 runId 是非空 string：未及提交 run 的失败用
-        // 空串占位（执行行保持 NULL，get_report 对其报 NOT_FOUND）。
-        "runId": run_id.unwrap_or_default(),
-        "reportArtifactId": Value::Null,
-    });
-    let _ = finish_domain_operation(db, operation_id, &request.session_id, "failed", &completion);
+    let _ = rt.store().finish_long_operation(operation_id, op_outcome);
+    update_execute_receipt_state(rt.store(), idempotency_key, receipt_state);
 }
 
-/// 受理后的 worker：提交 run → 等终态 → 报告产物 → 完成。
-async fn execute_discovery_plan(
+enum WaitDiscoveryStop {
+    Finished(StoredRun),
+    Cancelled,
+    TimedOut,
+}
+
+async fn wait_discovery_run_or_cancel(
+    rt: &Arc<PublicV1Runtime>,
+    operation_id: &str,
+    run_id: &str,
+    bound: Duration,
+) -> WaitDiscoveryStop {
+    let deadline = tokio::time::Instant::now() + bound;
+    let notifier = rt.store().state_notifier();
+    loop {
+        if rt
+            .store()
+            .operation_cancel_requested(operation_id)
+            .unwrap_or(false)
+        {
+            cancel_run_and_signal(rt, run_id);
+            return WaitDiscoveryStop::Cancelled;
+        }
+        match rt.store().get_run(run_id) {
+            Ok(run) if run.terminal => return WaitDiscoveryStop::Finished(run),
+            Ok(_) => {}
+            Err(_) => return WaitDiscoveryStop::TimedOut,
+        }
+        if tokio::time::Instant::now() >= deadline {
+            cancel_run_and_signal(rt, run_id);
+            return WaitDiscoveryStop::TimedOut;
+        }
+        let notified = notifier.notified();
+        tokio::select! {
+            _ = notified => {}
+            _ = tokio::time::sleep(Duration::from_millis(25)) => {}
+        }
+    }
+}
+
+/// 受理后的 worker：提交 run → 等终态或取消/超时 → 报告产物 → 终态收尾。
+async fn execute_discovery_plan_with_bound(
     rt: Arc<PublicV1Runtime>,
-    db: Arc<DomainDb>,
     operation_id: String,
     execution_id: String,
     request: DiscoveryRequest,
+    idempotency_key: Option<String>,
+    wait_bound: Duration,
 ) {
-    let _ = mark_domain_operation_running(&db, &operation_id, &request.session_id);
+    let _ = rt.store().mark_operation_running(&operation_id);
+    if rt
+        .store()
+        .operation_cancel_requested(&operation_id)
+        .unwrap_or(false)
+    {
+        finish_discovery_terminal(
+            &rt,
+            &operation_id,
+            &execution_id,
+            &request,
+            "cancelled",
+            None,
+            Some("CANCELLED"),
+            LongOperationOutcome::Cancelled,
+            "cancelled",
+            idempotency_key.as_deref(),
+        );
+        return;
+    }
+
     if let Err(error) = ensure_session(
         rt.store(),
         &request.session_id,
         &request.project_id,
         &format!("discovery {}", request.plan.plan_id),
     ) {
-        finish_discovery_failure(
+        finish_discovery_terminal(
             &rt,
-            &db,
             &operation_id,
             &execution_id,
             &request,
+            "failed",
             None,
-            &error,
+            Some(&error.code),
+            LongOperationOutcome::Failed {
+                code: error.code,
+                message: error.message,
+            },
+            "failed",
+            idempotency_key.as_deref(),
         );
         return;
     }
@@ -587,109 +861,171 @@ async fn execute_discovery_plan(
     ) {
         Ok(run_id) => run_id,
         Err(error) => {
-            finish_discovery_failure(
+            finish_discovery_terminal(
                 &rt,
-                &db,
                 &operation_id,
                 &execution_id,
                 &request,
+                "failed",
                 None,
-                &error,
+                Some(&error.code),
+                LongOperationOutcome::Failed {
+                    code: error.code,
+                    message: error.message,
+                },
+                "failed",
+                idempotency_key.as_deref(),
             );
             return;
         }
     };
     {
-        let conn = rt.store().conn.lock().expect("sqlite mutex");
-        let _ = update_execution(&conn, &execution_id, Some(&run_id), "running", None);
-        let _ = set_plan_execution(
-            &conn,
-            &request.project_id,
-            &request.plan.plan_id,
-            &run_id,
-            "running",
-        );
+        if let Ok(conn) = rt.store().conn.lock() {
+            let _ = update_execution(&conn, &execution_id, Some(&run_id), "running", None);
+            let _ = set_plan_execution(
+                &conn,
+                &request.project_id,
+                &request.plan.plan_id,
+                &run_id,
+                "running",
+            );
+        }
     }
-    let finished = wait_run_terminal(&rt, &run_id, RUN_WAIT_BOUND).await;
-    let state = finished
-        .as_ref()
-        .map(|run| run_state_str(run.state).to_owned())
-        .unwrap_or_else(|| "result_unknown".to_owned());
-    // 成功 → 报告产物（关联本次 run 与计划版本）；产物失败按失败收尾。
-    let report_artifact_id = if state == "succeeded" {
-        let report = build_report_markdown(&request, &execution_id, &run_id, finished.as_ref());
-        match publish_artifact(
-            rt.store(),
-            &request.project_id,
-            "text/markdown",
-            Some(&format!("discovery-report-{execution_id}.md")),
-            &report.into_bytes(),
-            "discovery-report",
-        ) {
-            Ok(artifact) => {
-                let artifact_id = artifact["artifactId"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .to_owned();
-                let conn = rt.store().conn.lock().expect("sqlite mutex");
-                let _ = set_execution_report(&conn, &execution_id, &artifact_id);
-                Some(artifact_id)
-            }
-            Err(error) => {
-                finish_discovery_failure(
-                    &rt,
-                    &db,
-                    &operation_id,
-                    &execution_id,
-                    &request,
-                    Some(&run_id),
-                    &error,
-                );
-                return;
+
+    match wait_discovery_run_or_cancel(&rt, &operation_id, &run_id, wait_bound).await {
+        WaitDiscoveryStop::Cancelled => {
+            finish_discovery_terminal(
+                &rt,
+                &operation_id,
+                &execution_id,
+                &request,
+                "cancelled",
+                Some(&run_id),
+                Some("CANCELLED"),
+                LongOperationOutcome::Cancelled,
+                "cancelled",
+                idempotency_key.as_deref(),
+            );
+        }
+        WaitDiscoveryStop::TimedOut => {
+            finish_discovery_terminal(
+                &rt,
+                &operation_id,
+                &execution_id,
+                &request,
+                "timed_out",
+                Some(&run_id),
+                Some("DEADLINE_EXCEEDED"),
+                LongOperationOutcome::Failed {
+                    code: "DEADLINE_EXCEEDED".to_owned(),
+                    message: format!(
+                        "discovery run `{run_id}` timed out before reaching terminal state"
+                    ),
+                },
+                "failed",
+                idempotency_key.as_deref(),
+            );
+        }
+        WaitDiscoveryStop::Finished(run) if run.state == RunState::Cancelled => {
+            finish_discovery_terminal(
+                &rt,
+                &operation_id,
+                &execution_id,
+                &request,
+                "cancelled",
+                Some(&run_id),
+                run.outcome_code.as_deref().or(Some("CANCELLED")),
+                LongOperationOutcome::Cancelled,
+                "cancelled",
+                idempotency_key.as_deref(),
+            );
+        }
+        WaitDiscoveryStop::Finished(run) if run.state == RunState::Succeeded => {
+            let report = build_report_markdown(&request, &execution_id, &run_id, Some(&run));
+            match publish_artifact(
+                rt.store(),
+                &request.project_id,
+                "text/markdown",
+                Some(&format!("discovery-report-{execution_id}.md")),
+                &report.into_bytes(),
+                "discovery-report",
+            ) {
+                Ok(artifact) => {
+                    let artifact_id = artifact["artifactId"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_owned();
+                    if let Ok(conn) = rt.store().conn.lock() {
+                        let _ = set_execution_report(&conn, &execution_id, &artifact_id);
+                    }
+                    let completion = json!({
+                        "projectId": request.project_id,
+                        "planId": request.plan.plan_id,
+                        "planRevision": request.plan.revision,
+                        "executionId": execution_id,
+                        "runId": run_id,
+                        "reportArtifactId": artifact_id,
+                    });
+                    finish_discovery_terminal(
+                        &rt,
+                        &operation_id,
+                        &execution_id,
+                        &request,
+                        "succeeded",
+                        Some(&run_id),
+                        None,
+                        LongOperationOutcome::Succeeded {
+                            result: completion,
+                            result_schema_id: Some(format!(
+                                "agentcpm-pd.{METHOD_ID_EXECUTE}.completion/1"
+                            )),
+                        },
+                        "succeeded",
+                        idempotency_key.as_deref(),
+                    );
+                }
+                Err(error) => {
+                    finish_discovery_terminal(
+                        &rt,
+                        &operation_id,
+                        &execution_id,
+                        &request,
+                        "failed",
+                        Some(&run_id),
+                        Some(&error.code),
+                        LongOperationOutcome::Failed {
+                            code: error.code,
+                            message: error.message,
+                        },
+                        "failed",
+                        idempotency_key.as_deref(),
+                    );
+                }
             }
         }
-    } else {
-        None
-    };
-    {
-        let conn = rt.store().conn.lock().expect("sqlite mutex");
-        let _ = update_execution(
-            &conn,
-            &execution_id,
-            Some(&run_id),
-            &state,
-            finished
-                .as_ref()
-                .and_then(|run| run.outcome_code.as_deref()),
-        );
-        let _ = set_plan_execution(
-            &conn,
-            &request.project_id,
-            &request.plan.plan_id,
-            &run_id,
-            "ready",
-        );
+        WaitDiscoveryStop::Finished(run) => {
+            let exec_state = run_state_str(run.state).to_owned();
+            let err_code = run
+                .outcome_code
+                .clone()
+                .unwrap_or_else(|| "EXECUTION_FAILED".to_owned());
+            finish_discovery_terminal(
+                &rt,
+                &operation_id,
+                &execution_id,
+                &request,
+                &exec_state,
+                Some(&run_id),
+                Some(&err_code),
+                LongOperationOutcome::Failed {
+                    code: err_code.clone(),
+                    message: format!("discovery run `{run_id}` finished in state `{exec_state}`"),
+                },
+                "failed",
+                idempotency_key.as_deref(),
+            );
+        }
     }
-    let completion = json!({
-        "projectId": request.project_id,
-        "planId": request.plan.plan_id,
-        "planRevision": request.plan.revision,
-        "executionId": execution_id,
-        "runId": run_id,
-        "reportArtifactId": report_artifact_id,
-    });
-    let op_state = if state == "succeeded" {
-        "succeeded"
-    } else {
-        "failed"
-    };
-    let _ = finish_domain_operation(
-        &db,
-        &operation_id,
-        &request.session_id,
-        op_state,
-        &completion,
-    );
 }
 
 /// 报告 markdown（薄格式：执行身份 + run 结果；内容由 get_report 原样返回）。
@@ -719,73 +1055,141 @@ async fn discovery_execute(
     input: Value,
     key: Option<String>,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
-    let db = domain_db(&rt)?;
     let project_id = input["projectId"].as_str().unwrap_or_default().to_owned();
     let plan_id = input["planId"].as_str().unwrap_or_default().to_owned();
     let expected_revision = input["expectedRevision"]
         .as_str()
         .unwrap_or_default()
         .to_owned();
+    let digest = compute_input_digest(METHOD_ID_EXECUTE, &input);
 
     // 在途栅栏：同 plan 的「幂等查找 + 校验 + 受理 + 执行行落位」串行。
     let _guard = lock_plan_execution(&project_id, &plan_id).await;
-    let operation = accept_operation(
-        &rt,
-        &db,
-        "discovery.execute",
-        &input,
-        key.as_deref(),
-        || format!("op-{}", rt.store().next_id()),
-        || {
-            build_discovery_request(&rt, &project_id, &plan_id, &expected_revision)
-                .and_then(|request| validate_discovery_execution(&rt, &request).map(|_| ()))
+
+    let rt_bg = Arc::clone(&rt);
+    let pid_bg = project_id.clone();
+    let plan_bg = plan_id.clone();
+    let exp_bg = expected_revision.clone();
+    let key_bg = key.clone();
+    let (replayed, operation_id, execution_id, snapshot_opt, receipt) = tokio::task::spawn_blocking(
+        move || -> Result<(bool, String, String, Option<DiscoveryRequest>, Value), ContractError> {
+            // Fast idempotency check before external workspace FS resolution.
+            if let Some(id_key) = key_bg.as_deref() {
+                let conn = rt_bg.store().conn.lock().map_err(|_| discovery_mutex_err())?;
+                if let Some(replay) = check_execute_idempotency_in_tx(&conn, id_key, &digest)? {
+                    return Ok((true, String::new(), String::new(), None, replay));
+                }
+            }
+
+            // Validate project & workspace root before acquiring IMMEDIATE write tx.
+            let ws_res = resolve_real_workspace(&rt_bg, &pid_bg);
+
+            let mut conn = rt_bg.store().conn.lock().map_err(|_| discovery_mutex_err())?;
+            let tx = conn
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(sql_err)?;
+            if let Some(id_key) = key_bg.as_deref()
+                && let Some(replay) = check_execute_idempotency_in_tx(&tx, id_key, &digest)?
+            {
+                tx.commit().map_err(sql_err)?;
+                return Ok((true, String::new(), String::new(), None, replay));
+            }
+
+            let validate_res = (|| -> Result<DiscoveryRequest, ContractError> {
+                ws_res?;
+                let plan = plan_row(&tx, &pid_bg, &plan_bg)?
+                    .ok_or_else(|| domain_not_found("plan", &plan_bg))?;
+                if exp_bg != plan.revision {
+                    return Err(revision_conflict(format!(
+                        "expectedRevision `{exp_bg}` does not match plan revision `{}`",
+                        plan.revision
+                    )));
+                }
+                if plan.content.trim().is_empty() {
+                    return Err(plan_empty(&plan.plan_id));
+                }
+                if execution_in_flight(&tx, &pid_bg, &plan.plan_id) {
+                    return Err(resource_busy(format!(
+                        "plan `{}` already has an in-flight execution",
+                        plan.plan_id
+                    )));
+                }
+                Ok(DiscoveryRequest {
+                    session_id: format!("s-disc-{pid_bg}-{}", plan.plan_id),
+                    project_id: pid_bg.clone(),
+                    plan,
+                })
+            })();
+
+            let snapshot = match validate_res {
+                Ok(req) => req,
+                Err(err) => {
+                    if err.retry.mode == RetryMode::Never
+                        && let Some(id_key) = key_bg.as_deref()
+                    {
+                        record_execute_rejection_in_tx(&tx, id_key, &digest, &err.code)?;
+                        tx.commit().map_err(sql_err)?;
+                    }
+                    return Err(err);
+                }
+            };
+
+            let (operation_id, accepted_revision) =
+                insert_long_operation_in_tx(&tx, rt_bg.store(), METHOD_ID_EXECUTE, &pid_bg)?;
+            let execution_id = format!("ex-{}", rt_bg.store().next_id());
+            begin_execution(
+                &tx,
+                &execution_id,
+                &snapshot.project_id,
+                &snapshot.plan,
+                &snapshot.session_id,
+            )?;
+            let receipt = json!({
+                "kind": "operation",
+                "operationId": operation_id,
+                "durable": true,
+                "acceptedRevision": accepted_revision,
+                "deduplicated": false,
+                "state": "queued",
+            });
+            if let Some(id_key) = key_bg.as_deref() {
+                record_execute_acceptance_in_tx(
+                    &tx,
+                    id_key,
+                    &digest,
+                    &json!({"kind": "operation", "operationId": operation_id}),
+                    &receipt,
+                )?;
+            }
+            tx.commit().map_err(sql_err)?;
+            Ok((false, operation_id, execution_id, Some(snapshot), receipt))
         },
-    )?;
-    // 重放（deduplicated）到此为止：直接回受理 receipt，不再触达计划状态。
-    if operation.receipt["deduplicated"].as_bool() == Some(true) {
-        return Ok((ResponseOutcome::Accepted, operation.receipt));
+    )
+    .await
+    .map_err(|_| DispatchError::from(discovery_mutex_err()))?
+    .map_err(DispatchError::from)?;
+
+    if replayed {
+        return Ok((ResponseOutcome::Accepted, receipt));
     }
-    // 受理后快照（罕见竞态：计划在受理与快照间消失 → 操作显式失败收尾）。
-    let snapshot = match build_discovery_request(&rt, &project_id, &plan_id, &expected_revision) {
-        Ok(snapshot) => snapshot,
-        Err(error) => {
-            let _ = finish_domain_operation(
-                &db,
-                &operation.operation_id,
-                "",
-                "failed",
-                &json!({
-                    "projectId": project_id,
-                    "planId": plan_id,
-                    "planRevision": expected_revision,
-                    "executionId": "",
-                    "runId": "",
-                    "reportArtifactId": Value::Null,
-                }),
-            );
-            return Err(error.into());
-        }
-    };
-    // 执行行同步落位（worker 侧任何失败路径都会终态化该行）。
-    let execution_id = format!("ex-{}", rt.store().next_id());
-    {
-        let conn = rt.store().conn.lock().expect("sqlite mutex");
-        let _ = begin_execution(
-            &conn,
-            &execution_id,
-            &snapshot.project_id,
-            &snapshot.plan,
-            &snapshot.session_id,
-        );
-    }
+
+    rt.store().event_notifier().notify_waiters();
     drop(_guard);
-    let runner_rt = rt.clone();
-    let runner_db = db.clone();
-    let operation_id = operation.operation_id.clone();
+
+    let snapshot = snapshot_opt.ok_or_else(|| DispatchError::from(discovery_mutex_err()))?;
+    let runner_rt = Arc::clone(&rt);
     tokio::spawn(async move {
-        execute_discovery_plan(runner_rt, runner_db, operation_id, execution_id, snapshot).await;
+        execute_discovery_plan_with_bound(
+            runner_rt,
+            operation_id,
+            execution_id,
+            snapshot,
+            key,
+            RUN_WAIT_BOUND,
+        )
+        .await;
     });
-    Ok((ResponseOutcome::Accepted, operation.receipt))
+    Ok((ResponseOutcome::Accepted, receipt))
 }
 
 // ---------------------------------------------------------------------------
@@ -796,63 +1200,68 @@ async fn discovery_get_report(
     rt: Arc<PublicV1Runtime>,
     input: Value,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
-    let project_id = input["projectId"].as_str().unwrap_or_default().to_owned();
-    let plan_id = input["planId"].as_str().unwrap_or_default().to_owned();
-    let execution_filter = input
-        .get("executionId")
-        .and_then(Value::as_str)
-        .filter(|s| !s.is_empty())
-        .map(ToOwned::to_owned);
+    let rt_bg = Arc::clone(&rt);
+    let body = tokio::task::spawn_blocking(move || -> Result<Value, ContractError> {
+        let project_id = input["projectId"].as_str().unwrap_or_default().to_owned();
+        let plan_id = input["planId"].as_str().unwrap_or_default().to_owned();
+        let execution_filter = input
+            .get("executionId")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(ToOwned::to_owned);
 
-    let execution = {
-        let conn = rt.store().conn.lock().expect("sqlite mutex");
-        if plan_row(&conn, &project_id, &plan_id)?.is_none() {
-            return Err(domain_not_found("plan", &plan_id).into());
-        }
-        let execution = match execution_filter.as_deref() {
-            Some(execution_id) => execution_by_id(&conn, &project_id, &plan_id, execution_id)?,
-            None => latest_execution(&conn, &project_id, &plan_id)?,
-        };
-        execution.ok_or_else(|| {
-            domain_not_found(
-                "discovery execution",
-                &format!("(plan {plan_id}; run discovery.execute first)"),
-            )
-        })?
-    };
-    // 未曾提交 run 的执行（受理后基础设施失败）没有可读报告：NOT_FOUND。
-    let Some(run_id) = execution.run_id.clone() else {
-        return Err(domain_not_found(
-            "discovery execution report",
-            &format!("(execution {} never started a run)", execution.execution_id),
-        )
-        .into());
-    };
-    // 未完成执行：区分 running（无完成报告，不冒充）。
-    let (report_artifact_id, content) =
-        if execution.state == "queued" || execution.state == "running" {
-            (Value::Null, Value::Null)
-        } else {
-            match &execution.report_artifact_id {
-                Some(artifact_id) => {
-                    let bytes = read_artifact_bytes(rt.store(), artifact_id)?;
-                    let text = String::from_utf8_lossy(&bytes).into_owned();
-                    (json!(artifact_id), json!(text))
-                }
-                None => (Value::Null, Value::Null),
+        let execution = {
+            let conn = rt_bg
+                .store()
+                .conn
+                .lock()
+                .map_err(|_| discovery_mutex_err())?;
+            if plan_row(&conn, &project_id, &plan_id)?.is_none() {
+                return Err(domain_not_found("plan", &plan_id));
             }
+            let execution = match execution_filter.as_deref() {
+                Some(execution_id) => execution_by_id(&conn, &project_id, &plan_id, execution_id)?,
+                None => latest_execution(&conn, &project_id, &plan_id)?,
+            };
+            execution.ok_or_else(|| {
+                domain_not_found(
+                    "discovery execution",
+                    &format!("(plan {plan_id}; run discovery.execute first)"),
+                )
+            })?
         };
-    Ok((
-        ResponseOutcome::Succeeded,
-        json!({
+        let Some(run_id) = execution.run_id.clone() else {
+            return Err(domain_not_found(
+                "discovery execution report",
+                &format!("(execution {} never started a run)", execution.execution_id),
+            ));
+        };
+        let (report_artifact_id, content) =
+            if execution.state == "queued" || execution.state == "running" {
+                (Value::Null, Value::Null)
+            } else {
+                match &execution.report_artifact_id {
+                    Some(artifact_id) => {
+                        let bytes = read_artifact_bytes(rt_bg.store(), artifact_id)?;
+                        let text = String::from_utf8_lossy(&bytes).into_owned();
+                        (json!(artifact_id), json!(text))
+                    }
+                    None => (Value::Null, Value::Null),
+                }
+            };
+        Ok(json!({
             "planId": execution.plan_id,
             "executionId": execution.execution_id,
             "runId": run_id,
             "state": execution.state,
             "reportArtifactId": report_artifact_id,
             "content": content,
-        }),
-    ))
+        }))
+    })
+    .await
+    .map_err(|_| DispatchError::from(discovery_mutex_err()))?
+    .map_err(DispatchError::from)?;
+    Ok((ResponseOutcome::Succeeded, body))
 }
 
 // ---------------------------------------------------------------------------
@@ -869,7 +1278,14 @@ pub fn record_discovery_plan(
     content: &str,
 ) -> Result<String, ContractError> {
     let store = automation::open_store_for_seeding(home)?;
-    let mut conn = store.conn.lock().expect("sqlite mutex");
+    let mut conn = store.conn.lock().map_err(|_| {
+        ContractError::new(
+            CODE_UNAVAILABLE,
+            "sqlite storage mutex poisoned".to_owned(),
+            RetrySpec::backoff_read(Some(250)),
+            EffectStatus::Unknown,
+        )
+    })?;
     automation::upsert_plan(&mut conn, project_id, plan_id, title, content, "ready")
 }
 
@@ -994,8 +1410,21 @@ mod tests {
         )
         .await;
         assert_eq!(page["items"].as_array().unwrap().len(), 1);
-        assert!(page["nextCursor"].as_str().is_some(), "分页游标");
+        let next_cursor = page["nextCursor"].as_str().expect("分页游标").to_owned();
         assert!(page["snapshotRevision"].as_str().is_some());
+
+        // Use nextCursor to fetch Page 2 (fixes `"dp"` vs `"dp-"` mismatch).
+        let page2 = dispatch_ok(
+            &fx.rt,
+            "discovery.list_plans",
+            json!({"projectId": "proj-1", "limit": 1, "cursor": next_cursor}),
+            None,
+        )
+        .await;
+        let items2 = page2["items"].as_array().unwrap();
+        assert_eq!(items2.len(), 1);
+        assert_eq!(items2[0]["planId"], "plan-b");
+        assert_eq!(page2["nextCursor"], Value::Null);
         // 选定 planId：返回正文与固定 revision。
         let selected = dispatch_ok(
             &fx.rt,
@@ -1265,5 +1694,138 @@ mod tests {
         )
         .await;
         assert_eq!(err.code, "NOT_FOUND");
+    }
+
+    #[tokio::test]
+    async fn execute_supports_operations_cancel_and_requests_lookup() {
+        let fx = fixture("disc-cancel").await;
+        crate::public_v1::domains::automation::tests::seed_real_project(&fx, "proj-1").await;
+        let revision = seed_plan(&fx, "proj-1", "plan-cancel", "hold [pd-driver:sleep=60000]");
+
+        let receipt = dispatch_ok(
+            &fx.rt,
+            "discovery.execute",
+            json!({"projectId": "proj-1", "planId": "plan-cancel", "expectedRevision": revision}),
+            Some("k-disc-cancel-1"),
+        )
+        .await;
+        let op_id = receipt["operationId"].as_str().unwrap().to_owned();
+
+        // requests.lookup must return the operation resource.
+        let lookup = dispatch_ok(
+            &fx.rt,
+            "requests.lookup",
+            json!({"methodId": "discovery.execute", "idempotencyKey": "k-disc-cancel-1"}),
+            None,
+        )
+        .await;
+        OperationRegistry::global()
+            .validate_result("requests.lookup", &lookup)
+            .unwrap();
+        assert_eq!(lookup["resource"]["kind"], "operation");
+        assert_eq!(lookup["resource"]["operationId"], op_id);
+
+        // Wait until execution reaches running, then cancel via operations.cancel.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        loop {
+            if let Ok((_, rpt)) = fx
+                .rt
+                .dispatch(
+                    "discovery.get_report",
+                    json!({"projectId": "proj-1", "planId": "plan-cancel"}),
+                    None,
+                    None,
+                )
+                .await
+                && rpt["state"] == "running"
+            {
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline);
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let _ = dispatch_ok(
+            &fx.rt,
+            "operations.cancel",
+            json!({"operationId": op_id}),
+            Some("k-disc-cancel-op"),
+        )
+        .await;
+        let operation = wait_domain_operation(&fx.rt, &op_id).await;
+        assert_eq!(operation["state"], "cancelled");
+        let report = wait_report(&fx.rt, "proj-1", "plan-cancel").await;
+        assert_eq!(report["state"], "cancelled");
+    }
+
+    #[tokio::test]
+    async fn execute_timeout_and_startup_recovery_unblock_plan() {
+        let fx = fixture("disc-timeout-recover").await;
+        crate::public_v1::domains::automation::tests::seed_real_project(&fx, "proj-1").await;
+        let revision = seed_plan(&fx, "proj-1", "plan-slow", "hold [pd-driver:sleep=60000]");
+
+        let op_id = fx.rt.store().next_id();
+        let ex_id = format!("ex-{}", fx.rt.store().next_id());
+        let plan = {
+            let mut conn = fx.rt.store().conn.lock().unwrap();
+            let tx = conn
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .unwrap();
+            tx.execute(
+                "INSERT INTO operations (operation_id, operation_type, scope_kind, project_id, session_id,
+                    state, revision, cancel_requested, cancellable, effect_status, progress_json,
+                    created_at, updated_at)
+                 VALUES (?1, 'discovery.execute', 'project', 'proj-1', NULL, 'queued', 'rev-t', 0, 1, 'known', '[]', ?2, ?2)",
+                params![op_id, now_rfc3339()],
+            )
+            .unwrap();
+            let p = plan_row(&tx, "proj-1", "plan-slow").unwrap().unwrap();
+            begin_execution(&tx, &ex_id, "proj-1", &p, "s-disc-proj-1-plan-slow").unwrap();
+            tx.commit().unwrap();
+            p
+        };
+        let req = DiscoveryRequest {
+            project_id: "proj-1".to_owned(),
+            session_id: "s-disc-proj-1-plan-slow".to_owned(),
+            plan,
+        };
+        execute_discovery_plan_with_bound(
+            Arc::clone(&fx.rt),
+            op_id.clone(),
+            ex_id.clone(),
+            req,
+            None,
+            Duration::from_millis(80),
+        )
+        .await;
+
+        let op = wait_domain_operation(&fx.rt, &op_id).await;
+        assert_eq!(op["state"], "failed");
+        assert_eq!(op["error"]["code"], "DEADLINE_EXCEEDED");
+        let report = wait_report(&fx.rt, "proj-1", "plan-slow").await;
+        assert_eq!(report["state"], "timed_out");
+        {
+            let conn = fx.rt.store().conn.lock().unwrap();
+            assert!(!execution_in_flight(&conn, "proj-1", "plan-slow"));
+            let p = plan_row(&conn, "proj-1", "plan-slow").unwrap().unwrap();
+            assert_eq!(p.state, "ready");
+
+            // Simulate orphaned running execution/plan across crash & verify startup recovery helper.
+            conn.execute(
+                "INSERT INTO v1_discovery_executions (execution_id, project_id, plan_id, plan_revision, session_id, run_id, state, created_at, updated_at)
+                 VALUES ('ex-orphan', 'proj-1', 'plan-slow', ?1, 's', NULL, 'running', '2026-11-20T00:00:00Z', '2026-11-20T00:00:00Z')",
+                params![revision],
+            )
+            .unwrap();
+            conn.execute(
+                "UPDATE v1_automation_plans SET state = 'running' WHERE project_id = 'proj-1' AND plan_id = 'plan-slow'",
+                [],
+            )
+            .unwrap();
+            let recovered = recover_orphaned_discovery_executions(&conn, &now_rfc3339()).unwrap();
+            assert!(recovered >= 1);
+            assert!(!execution_in_flight(&conn, "proj-1", "plan-slow"));
+            let p2 = plan_row(&conn, "proj-1", "plan-slow").unwrap().unwrap();
+            assert_eq!(p2.state, "ready");
+        }
     }
 }

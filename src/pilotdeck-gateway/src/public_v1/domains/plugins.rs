@@ -1078,10 +1078,13 @@ fn masked_configuration(configuration: &Value) -> Value {
     Value::Object(out)
 }
 
-/// The policy gate for plugin-scoped selectors (the t005 surface, read the
-/// same way `tools.list` reads it): a `deny` rule matching the plugin id (or
-/// `*`) blocks the invocation for this scope.
-fn policy_denies(rt: &PublicV1Runtime, scope: &ToolScope, plugin_id: &str) -> bool {
+/// The policy gate for plugin-scoped selectors (delegated to `policy::evaluate_policy_for_scope`).
+fn policy_denies(
+    rt: &PublicV1Runtime,
+    scope: &ToolScope,
+    plugin_id: &str,
+    resource: Option<&str>,
+) -> bool {
     let policy_scope = match scope {
         ToolScope::Global => crate::public_v1::domains::policy::PolicyScope::Instance,
         ToolScope::Project { project_id } => {
@@ -1097,21 +1100,13 @@ fn policy_denies(rt: &PublicV1Runtime, scope: &ToolScope, plugin_id: &str) -> bo
             session_id: session_id.clone(),
         },
     };
-    let Ok(view) = rt.store().get_policy(&policy_scope) else {
-        return false;
-    };
-    view.policy
-        .get("rules")
-        .and_then(Value::as_array)
-        .is_some_and(|rules| {
-            rules.iter().any(|rule| {
-                rule.get("effect").and_then(Value::as_str) == Some("deny")
-                    && rule
-                        .get("tool")
-                        .and_then(Value::as_str)
-                        .is_some_and(|selector| selector == "*" || selector == plugin_id)
-            })
-        })
+    let eval = crate::public_v1::domains::policy::evaluate_policy_for_scope(
+        rt.store(),
+        &policy_scope,
+        plugin_id,
+        resource,
+    );
+    eval.decision == crate::public_v1::domains::policy::PolicyDecision::Deny
 }
 
 // ---------------------------------------------------------------------------
@@ -2097,7 +2092,9 @@ async fn plugins_invoke(
             error.details = Some(map);
             return Err(error);
         }
-        if policy_denies(&rt, &scope, &plugin_id) {
+        let resource =
+            crate::public_v1::domains::policy::resource_string_from_arguments(&arguments);
+        if policy_denies(&rt, &scope, &plugin_id, resource.as_deref()) {
             return Err(ContractError::new(
                 CODE_PERMISSION_DENIED,
                 format!("plugin `{plugin_id}` is denied by policy for this scope"),

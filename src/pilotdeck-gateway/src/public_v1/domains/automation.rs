@@ -232,9 +232,14 @@ pub(crate) fn parse_offset_cursor(
     let Some(cursor) = cursor else {
         return Ok(0);
     };
-    cursor
-        .strip_prefix(prefix)
-        .and_then(|rest| rest.parse::<usize>().ok())
+    let rest = if prefix.ends_with('-') {
+        cursor.strip_prefix(prefix)
+    } else {
+        cursor
+            .strip_prefix(prefix)
+            .and_then(|s| s.strip_prefix('-'))
+    };
+    rest.and_then(|rest| rest.parse::<usize>().ok())
         .ok_or_else(|| invalid_arg(format!("malformed cursor `{cursor}`")))
 }
 
