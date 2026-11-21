@@ -896,12 +896,12 @@ pub(crate) fn rollback_created_dirs(created: &[CreatedDirEntry]) {
 
 #[cfg(unix)]
 fn stat_mtime_ns_rustix(stat: &rustix::fs::Stat) -> i64 {
-    i64::from(stat.st_mtime) * 1_000_000_000 + (stat.st_mtime_nsec as i64)
+    stat.st_mtime * 1_000_000_000 + (stat.st_mtime_nsec as i64)
 }
 
 #[cfg(unix)]
 fn stat_rfc3339_rustix(stat: &rustix::fs::Stat) -> String {
-    chrono::DateTime::from_timestamp(i64::from(stat.st_mtime), stat.st_mtime_nsec as u32)
+    chrono::DateTime::from_timestamp(stat.st_mtime, stat.st_mtime_nsec as u32)
         .unwrap_or_else(Utc::now)
         .to_rfc3339()
 }
