@@ -1432,9 +1432,21 @@ mod tests {
             evaluate_policy(&allow_cfg, "write_file", Some("a.txt")).decision,
             PolicyDecision::Deny
         );
-        // Narrow deny does not block tool wholesale in catalog; allows remain usable.
+        // Narrow deny does not block tool wholesale in catalog; sub-pattern ask surfaces on catalog view
+        // while a tool with only allow + narrow deny remains Allow.
         assert_eq!(
             evaluate_policy(&allow_cfg, "bash", None).decision,
+            PolicyDecision::Ask
+        );
+        let allow_and_narrow_deny = make_view(
+            "allowConfigured",
+            json!([
+                {"ruleId": "allow-npm", "effect": "allow", "tool": "bash", "resourcePattern": "npm *"},
+                {"ruleId": "deny-rm", "effect": "deny", "tool": "bash", "resourcePattern": "rm *"},
+            ]),
+        );
+        assert_eq!(
+            evaluate_policy(&allow_and_narrow_deny, "bash", None).decision,
             PolicyDecision::Allow
         );
 
@@ -1523,8 +1535,8 @@ mod tests {
             )
             .unwrap();
             tx.execute(
-                "INSERT INTO interactions (interaction_id, run_id, session_id, kind, state, revision, prompt_json, options_json, answer_json, policy_revision, resolution, created_at, updated_at)
-                 VALUES ('ia-mem', 'run-mem', 'sess-mem', 'approval', 'answered', 'r2', ?1, '[]', '{\"decision\":\"allow\"}', 'rev-mem-1', 'answered', '2026-11-20T00:00:00Z', '2026-11-20T00:00:00Z')",
+                "INSERT INTO interactions (interaction_id, kind, run_id, project_id, session_id, revision, state, resolution, prompt_json, choices_json, response_schema_json, answer_json, policy_revision, created_at)
+                 VALUES ('ia-mem', 'approval', 'run-mem', 'proj-mem', 'sess-mem', 'r2', 'answered', 'answered', ?1, '[]', '{}', '{\"decision\":\"allow\"}', 'rev-mem-1', '2026-11-20T00:00:00Z')",
                 params![r#"{"tool":"bash","resourcePattern":"cargo test *"}"#],
             )
             .unwrap();

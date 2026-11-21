@@ -637,20 +637,7 @@ async fn run_generation_is_explainable_and_not_hot_swapped() {
 
     // A new run submitted after the configuration update captures the new
     // applied configuration generation and revision.
-    let out = await_cli(
-        root,
-        &[
-            "run",
-            "submit",
-            "--output",
-            "json",
-            "--session-id",
-            &session_id,
-            "--prompt",
-            "anchor3-after-update",
-        ],
-    );
-    let submitted2 = expect_ok("run.submit", &out);
+    let submitted2 = submit_run(root, &session_id, "anchor3-after-update", "e2e-cfg-run-2").await;
     let run2_id = submitted2["runId"].as_str().unwrap().to_owned();
     let out = await_cli(
         root,

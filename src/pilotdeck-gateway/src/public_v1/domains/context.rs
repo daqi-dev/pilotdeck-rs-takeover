@@ -3763,7 +3763,7 @@ mod tests {
             json!({
                 "instanceId": iid,
                 "scope": {"kind": "instance"},
-                "expectedStoredRevision": cfg_rev,
+                "expectedRevision": cfg_rev,
                 "changes": [{"key": "ui.theme", "action": "set", "value": "dark"}],
             }),
         )

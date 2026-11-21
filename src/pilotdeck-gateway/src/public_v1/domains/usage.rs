@@ -1582,7 +1582,8 @@ mod tests {
                 json!({
                     "instanceId": iid,
                     "scope": {"kind": "instance"},
-                    "model": {"providerId": "prov-ov", "modelId": "m-ov"},
+                    "from": "2026-11-03T00:00:00Z",
+                    "to": "2026-11-03T23:59:59Z",
                     "groupBy": "model"
                 }),
                 None,

@@ -770,7 +770,7 @@ impl PublicV1Runtime {
                 caps.push(json!({
                     "methodId": op.id,
                     "available": false,
-                    "reason": "CAPABILITY_UNAVAILABLE",
+                    "reason": "IMPLEMENTATION_UNAVAILABLE",
                     "schemaVersion": OPERATION_VERSION,
                     "limits": limits_pair,
                     "supported": true,

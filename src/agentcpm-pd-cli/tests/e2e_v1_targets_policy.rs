@@ -995,6 +995,7 @@ async fn instance_inspect_initialization_reports_four_states() {
 #[tokio::test]
 async fn policy_rejects_blank_tool_rule_and_configuration_update_cannot_bypass_policy_domain() {
     let home = TestHome::new("t005-policy-boundary");
+    init_home(home.path());
     let instance_scope = json!({"kind": "instance"});
     let default = expect_ok("policy.get", &policy_get(home.path(), &instance_scope));
     let rev = default["policy"]["revision"].as_str().unwrap().to_owned();
