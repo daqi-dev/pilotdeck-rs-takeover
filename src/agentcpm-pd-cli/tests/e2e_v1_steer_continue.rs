@@ -581,40 +581,6 @@ async fn offline_directives_disabled_refuses_steer_and_promote_with_capability_u
         ),
     );
 
-    let q0 = expect_ok(
-        "queue.get",
-        &await_cli_offline_disabled(
-            root,
-            &[
-                "queue",
-                "get",
-                "--output",
-                "json",
-                "--session-id",
-                session_id,
-            ],
-        ),
-    );
-    let q0_rev = q0["queue"]["revision"].as_str().unwrap().to_owned();
-    expect_ok(
-        "queue.pause",
-        &await_cli_offline_disabled(
-            root,
-            &[
-                "queue",
-                "pause",
-                "--output",
-                "json",
-                "--session-id",
-                session_id,
-                "--expected-revision",
-                &q0_rev,
-                "--reason",
-                "cap-test",
-            ],
-        ),
-    );
-
     let r1 = expect_ok(
         "run.submit",
         &await_cli_offline_disabled(
@@ -658,6 +624,44 @@ async fn offline_directives_disabled_refuses_steer_and_promote_with_capability_u
         .unwrap()
         .to_owned();
 
+    // 等两条运行结束再暂停队列，避免后台完成出队在 q_before..q_after 之间推进 queue_revision。
+    expect_ok("run.wait", &wait_run(root, &r1));
+    expect_ok("run.wait", &wait_run(root, &r2));
+
+    let q0 = expect_ok(
+        "queue.get",
+        &await_cli_offline_disabled(
+            root,
+            &[
+                "queue",
+                "get",
+                "--output",
+                "json",
+                "--session-id",
+                session_id,
+            ],
+        ),
+    );
+    let q0_rev = q0["queue"]["revision"].as_str().unwrap().to_owned();
+    expect_ok(
+        "queue.pause",
+        &await_cli_offline_disabled(
+            root,
+            &[
+                "queue",
+                "pause",
+                "--output",
+                "json",
+                "--session-id",
+                session_id,
+                "--expected-revision",
+                &q0_rev,
+                "--reason",
+                "cap-test",
+            ],
+        ),
+    );
+
     let q_before = expect_ok(
         "queue.get",
         &await_cli_offline_disabled(
@@ -673,6 +677,7 @@ async fn offline_directives_disabled_refuses_steer_and_promote_with_capability_u
         ),
     );
     let q_rev = q_before["queue"]["revision"].as_str().unwrap().to_owned();
+    let q_items_before = q_before["queue"]["items"].clone();
 
     // steer.submit refuses CAPABILITY_UNAVAILABLE with zero DB writes.
     let steer_out = await_cli_offline_disabled(
@@ -750,7 +755,7 @@ async fn offline_directives_disabled_refuses_steer_and_promote_with_capability_u
         ),
     );
     assert_eq!(q_after["queue"]["revision"], q_rev);
-    assert_eq!(q_after["queue"]["items"].as_array().map(Vec::len), Some(2));
+    assert_eq!(q_after["queue"]["items"], q_items_before);
 }
 
 #[tokio::test]
@@ -809,7 +814,7 @@ async fn steer_withdrawn_resubmit_conflicts_and_terminal_withdraw_conflicts() {
             &["run", "cancel", "--output", "json", "--run-id", &r_term],
         ),
     );
-    let waited = expect_ok("run.wait", &wait_run(root, &r_term));
+    let waited = expect_envelope("run.wait", &wait_run(root, &r_term));
     assert_eq!(waited["run"]["state"], "cancelled");
 
     let wd_after_term = steer_withdraw(root, &r_term, "st-term", &pending_rev);

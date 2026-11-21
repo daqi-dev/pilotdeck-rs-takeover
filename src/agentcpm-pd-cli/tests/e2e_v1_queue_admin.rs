@@ -690,8 +690,9 @@ async fn queue_promote_to_steer_roundtrip() {
         "转换输入必须到达目标 run: {texts:?}"
     );
 
-    // 已转换（终态出队）的项不可再作为排队项。
-    let out = queue_cmd(
+    // 目标 run 完成后从 run_queue 移除并推进 queue_revision（旧 revision 报 REVISION_CONFLICT）；
+    // 使用最新 revision 对已转换（终态出队）的项调度则报 NOT_FOUND。
+    let out_stale = queue_cmd(
         root,
         "promote-to-steer",
         &[
@@ -703,6 +704,30 @@ async fn queue_promote_to_steer_roundtrip() {
             &head,
             "--expected-revision",
             &promoted_rev,
+            "--steer-id",
+            "st-e2e-stale",
+        ],
+    );
+    assert_eq!(
+        expect_fail("queue.promote_to_steer", &out_stale),
+        "REVISION_CONFLICT"
+    );
+    let after_done_rev = queue_of(root, &session_id).await["revision"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let out = queue_cmd(
+        root,
+        "promote-to-steer",
+        &[
+            "--session-id",
+            &session_id,
+            "--queued-run-id",
+            &queued,
+            "--active-run-id",
+            &head,
+            "--expected-revision",
+            &after_done_rev,
             "--steer-id",
             "st-e2e-2",
         ],
