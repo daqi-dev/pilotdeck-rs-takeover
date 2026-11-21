@@ -3044,7 +3044,7 @@ mod tests {
             let body = match *method {
                 8 => {
                     let mut encoder =
-                        flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::fast());
+                        flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::best());
                     use std::io::Write;
                     encoder.write_all(data).unwrap();
                     encoder.finish().unwrap()
@@ -3103,7 +3103,11 @@ mod tests {
         // 1) Deflate Zip Bomb：>64 MiB 解压负载必须被 zip_read 截断报 RESOURCE_LIMIT。
         let huge = vec![b'A'; 65 * 1024 * 1024];
         let bomb = build_custom_xlsx(&huge, 8);
-        assert!(bomb.len() < 512 * 1024, "compressed zip bomb stays tiny");
+        assert!(
+            bomb.len() < 512 * 1024,
+            "compressed zip bomb stays tiny: {} bytes",
+            bomb.len()
+        );
         let err = parse_xlsx(&bomb, MAX_CELLS)
             .err()
             .expect("zip bomb rejected");

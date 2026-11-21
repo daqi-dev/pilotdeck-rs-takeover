@@ -4471,7 +4471,19 @@ mod tests {
             assert_eq!(hash_err.code, CODE_NOT_A_FILE);
             let read_err = tokio::time::timeout(
                 std::time::Duration::from_secs(2),
-                rt.dispatch("files.read", path_input("proj-nf", "pipe.fifo"), None, None),
+                rt.dispatch(
+                    "files.read",
+                    json!({
+                        "path": {
+                            "projectId": "proj-nf",
+                            "relativePath": {"encoding": "utf8", "value": "pipe.fifo"},
+                        },
+                        "offset": 0,
+                        "maxBytes": 64,
+                    }),
+                    None,
+                    None,
+                ),
             )
             .await
             .expect("FIFO files.read must not block")
