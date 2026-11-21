@@ -412,10 +412,8 @@ pub(crate) fn evaluate_policy(
                     ask_rule_ids.push(rule_id);
                 }
             }
-            Some("allow") => {
-                if allowed_rule.is_none() {
-                    allowed_rule = Some(rule_id);
-                }
+            Some("allow") if allowed_rule.is_none() => {
+                allowed_rule = Some(rule_id);
             }
             _ => {}
         }

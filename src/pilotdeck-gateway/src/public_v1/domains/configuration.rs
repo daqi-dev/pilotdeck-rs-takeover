@@ -364,7 +364,7 @@ fn resolve_masked_secrets_in_place(
             }
             Value::Array(arr) => {
                 let prev_arr = prev_node.and_then(Value::as_array);
-                for (idx, elem) in arr.into_iter().enumerate() {
+                for (idx, elem) in arr.iter_mut().enumerate() {
                     let path = format!("{prefix}[{idx}]");
                     let prev_elem = prev_arr.and_then(|a| a.get(idx));
                     if matches!(elem, Value::Object(_) | Value::Array(_)) {

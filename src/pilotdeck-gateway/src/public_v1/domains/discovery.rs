@@ -761,7 +761,7 @@ fn finish_discovery_terminal(
 }
 
 enum WaitDiscoveryStop {
-    Finished(StoredRun),
+    Finished(Box<StoredRun>),
     Cancelled,
     TimedOut,
 }
@@ -784,7 +784,7 @@ async fn wait_discovery_run_or_cancel(
             return WaitDiscoveryStop::Cancelled;
         }
         match rt.store().get_run(run_id) {
-            Ok(run) if run.terminal => return WaitDiscoveryStop::Finished(run),
+            Ok(run) if run.terminal => return WaitDiscoveryStop::Finished(Box::new(run)),
             Ok(_) => {}
             Err(_) => return WaitDiscoveryStop::TimedOut,
         }
