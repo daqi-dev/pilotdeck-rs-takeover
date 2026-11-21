@@ -1072,6 +1072,8 @@ async fn journey_j1_project_full_lifecycle() {
             &question_id,
             "--expected-revision",
             &rev_after_claim,
+            "--lease-id",
+            "j1-lease",
             "--answer",
             "{\"text\":\"j1 leased answer\"}",
         ],
@@ -1099,7 +1101,7 @@ async fn journey_j1_project_full_lifecycle() {
         ],
     );
     let released = expect_ok("interaction.release", &out);
-    assert_eq!(released["released"], true);
+    assert_eq!(released["released"], false);
     let got = journey_cli(
         root,
         &[

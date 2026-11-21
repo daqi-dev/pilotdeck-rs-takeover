@@ -57,7 +57,7 @@ use agentcpm_pd_protocol::errors::{
     CODE_UNAVAILABLE, ContractError, EffectStatus, RetryMode, RetrySpec,
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde_json::{Value, json};
 
 use crate::public_v1::domains::DomainRegistry;
@@ -264,6 +264,7 @@ fn cron_to_contract(error: CronError) -> ContractError {
 /// both use `busy_timeout`, and this domain's transactions are short.
 pub(crate) struct DomainDb {
     conn: Mutex<Connection>,
+    accept_lock: Mutex<()>,
 }
 
 impl DomainDb {
@@ -295,6 +296,7 @@ impl DomainDb {
         }
         Ok(Self {
             conn: Mutex::new(conn),
+            accept_lock: Mutex::new(()),
         })
     }
 
@@ -795,6 +797,10 @@ pub(crate) fn lookup_domain_operation(
     }
 }
 
+fn domain_retained_until() -> String {
+    (chrono::Utc::now() + chrono::Duration::hours(24)).to_rfc3339()
+}
+
 /// Accepts (records) one operation after its pre-accept validation passed.
 pub(crate) fn record_domain_operation_accept(
     db: &DomainDb,
@@ -806,23 +812,59 @@ pub(crate) fn record_domain_operation_accept(
 ) -> Result<(), ContractError> {
     let digest = compute_input_digest(method_id, input);
     let now = now_rfc3339();
-    db.with_conn("insert operation", |conn| {
-        conn.execute(
-            "INSERT INTO v1_domain_operations
-                (operation_id, method_id, idempotency_key, input_digest, state, receipt_json,
-                 completion_json, rejection_code, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, 'queued', ?5, NULL, NULL, ?6, ?6)",
-            params![
-                operation_id,
-                method_id,
-                idempotency_key,
-                digest,
-                serde_json::to_string(receipt).unwrap_or_else(|_| "{}".into()),
-                now,
-            ],
-        )?;
-        Ok(())
-    })
+    let retained_until = domain_retained_until();
+    let receipt_str = serde_json::to_string(receipt).unwrap_or_else(|_| "{}".into());
+    let mut conn = db.conn.lock().unwrap_or_else(|e| e.into_inner());
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|e| sql_err("begin insert operation", e))?;
+    tx.execute(
+        "INSERT INTO v1_domain_operations
+            (operation_id, method_id, idempotency_key, input_digest, state, receipt_json,
+             completion_json, rejection_code, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, 'queued', ?5, NULL, NULL, ?6, ?6)",
+        params![
+            operation_id,
+            method_id,
+            idempotency_key,
+            digest,
+            receipt_str,
+            now,
+        ],
+    )
+    .map_err(|e| sql_err("insert operation", e))?;
+    if let Some(key) = idempotency_key {
+        let has_idem: bool = tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'idempotency_records')",
+                [],
+                |r| r.get(0),
+            )
+            .map_err(|e| sql_err("check idempotency_records", e))?;
+        if has_idem {
+            let resource = json!({"kind": "operation", "operationId": operation_id});
+            tx.execute(
+                "INSERT OR IGNORE INTO idempotency_records (
+                    idempotency_key, method_id, input_digest, request_state, reason,
+                    resource_json, receipt_json, rejection_code, observed_at,
+                    retained_until, retry_disposition
+                 ) VALUES (?1, ?2, ?3, 'accepted', 'receiptFound', ?4, ?5, NULL, ?6, ?7, 'doNotReplay')",
+                params![
+                    key,
+                    method_id,
+                    digest,
+                    serde_json::to_string(&resource).unwrap_or_else(|_| "null".into()),
+                    receipt_str,
+                    now,
+                    retained_until,
+                ],
+            )
+            .map_err(|e| sql_err("record operation idempotency", e))?;
+        }
+    }
+    tx.commit()
+        .map_err(|e| sql_err("commit insert operation", e))?;
+    Ok(())
 }
 
 /// Records a definitive pre-accept rejection under the caller's key (only
@@ -840,25 +882,49 @@ pub(crate) fn record_domain_operation_rejection(
     };
     let digest = compute_input_digest(method_id, input);
     let now = now_rfc3339();
-    db.with_conn("record operation rejection", |conn| {
-        conn.execute(
-            "INSERT OR REPLACE INTO v1_domain_operations
-                (operation_id, method_id, idempotency_key, input_digest, state, receipt_json,
-                 completion_json, rejection_code, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, 'rejected', '{}', NULL, ?5, ?6, ?6)",
-            params![
-                // Method-scoped so one key rejecting under two different
-                // operations does not clobber the other's record.
-                format!("rejected-{method_id}-{key}"),
-                method_id,
-                key,
-                digest,
-                code,
-                now,
-            ],
-        )?;
-        Ok(())
-    })
+    let retained_until = domain_retained_until();
+    let mut conn = db.conn.lock().unwrap_or_else(|e| e.into_inner());
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|e| sql_err("begin record rejection", e))?;
+    tx.execute(
+        "INSERT OR REPLACE INTO v1_domain_operations
+            (operation_id, method_id, idempotency_key, input_digest, state, receipt_json,
+             completion_json, rejection_code, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, 'rejected', '{}', NULL, ?5, ?6, ?6)",
+        params![
+            // Method-scoped so one key rejecting under two different
+            // operations does not clobber the other's record.
+            format!("rejected-{method_id}-{key}"),
+            method_id,
+            key,
+            digest,
+            code,
+            now,
+        ],
+    )
+    .map_err(|e| sql_err("record operation rejection", e))?;
+    let has_idem: bool = tx
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'idempotency_records')",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(|e| sql_err("check idempotency_records", e))?;
+    if has_idem {
+        tx.execute(
+            "INSERT OR IGNORE INTO idempotency_records (
+                idempotency_key, method_id, input_digest, request_state, reason,
+                resource_json, receipt_json, rejection_code, observed_at,
+                retained_until, retry_disposition
+             ) VALUES (?1, ?2, ?3, 'notAccepted', 'definitivelyRejected', NULL, NULL, ?4, ?5, ?6, 'correctRejectedInputWithNewKey')",
+            params![key, method_id, digest, code, now, retained_until],
+        )
+        .map_err(|e| sql_err("record rejection idempotency", e))?;
+    }
+    tx.commit()
+        .map_err(|e| sql_err("commit record rejection", e))?;
+    Ok(())
 }
 
 /// Marks the operation running (with an `operation.started` event).
@@ -932,6 +998,7 @@ pub(crate) fn accept_domain_operation(
     new_operation_id: impl FnOnce() -> String,
     validate: impl FnOnce() -> Result<(), ContractError>,
 ) -> Result<AcceptedDomainOperation, ContractError> {
+    let _accept_guard = db.accept_lock.lock().unwrap_or_else(|e| e.into_inner());
     match lookup_domain_operation(db, method_id, input, idempotency_key)? {
         DomainOperationLookup::Replay(receipt) => {
             return Ok(AcceptedDomainOperation {

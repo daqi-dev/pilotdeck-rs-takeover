@@ -59,8 +59,9 @@ use agentcpm_pd_protocol::errors::{
     CODE_INVALID_ARGUMENT, CODE_NOT_FOUND, CODE_REVISION_CONFLICT, CODE_UNAVAILABLE, ContractError,
     EffectStatus, RetrySpec,
 };
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 
 use crate::public_v1::domains::DomainRegistry;
 use crate::public_v1::runtime::{DispatchError, PublicV1Runtime};
@@ -104,6 +105,34 @@ pub(super) fn register(reg: &mut DomainRegistry) {
 // Handlers
 // ---------------------------------------------------------------------------
 
+async fn run_blocking<T, F>(task: F) -> Result<T, ContractError>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, ContractError> + Send + 'static,
+{
+    tokio::task::spawn_blocking(task).await.map_err(|e| {
+        ContractError::new(
+            CODE_UNAVAILABLE,
+            format!("interaction lease worker failed: {e}"),
+            RetrySpec::backoff_read(Some(250)),
+            EffectStatus::Unknown,
+        )
+    })?
+}
+
+/// Derives an opaque, non-secret owner tag stored in `interactions.lease_owner`
+/// so public read methods (`interaction.get`/`list`) and conflict errors never
+/// reveal the fencing `leaseId` credential (#9).
+fn public_lease_owner(lease_id: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(lease_id.as_bytes());
+    let digest = hasher.finalize();
+    format!(
+        "lease-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+        digest[0], digest[1], digest[2], digest[3], digest[4], digest[5], digest[6], digest[7]
+    )
+}
+
 async fn interaction_claim(
     rt: Arc<PublicV1Runtime>,
     input: Value,
@@ -114,7 +143,8 @@ async fn interaction_claim(
     let rev = expected_revision
         .as_deref()
         .or_else(|| input.get("expectedRevision").and_then(Value::as_str))
-        .unwrap_or_default();
+        .unwrap_or_default()
+        .to_owned();
     // Schema validation guarantees an integer >= 1 when present; a value no
     // u64 can represent (e.g. 1e20, accepted by the schema's f64 check) is
     // rejected here instead of silently falling back to the default.
@@ -127,12 +157,16 @@ async fn interaction_claim(
             )
         })?,
     };
-    let claim = rt.store().claim_interaction_lease(
-        input["interactionId"].as_str().unwrap_or_default(),
-        rev,
-        input["leaseId"].as_str().unwrap_or_default(),
-        ttl_ms,
-    )?;
+    let interaction_id = input["interactionId"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
+    let lease_id = input["leaseId"].as_str().unwrap_or_default().to_owned();
+    let store = rt.store().clone();
+    let claim = run_blocking(move || {
+        store.claim_interaction_lease(&interaction_id, &rev, &lease_id, ttl_ms)
+    })
+    .await?;
     Ok((
         ResponseOutcome::Succeeded,
         json!({
@@ -151,12 +185,17 @@ async fn interaction_release(
     let rev = expected_revision
         .as_deref()
         .or_else(|| input.get("expectedRevision").and_then(Value::as_str))
-        .unwrap_or_default();
-    let release = rt.store().release_interaction_lease(
-        input["interactionId"].as_str().unwrap_or_default(),
-        rev,
-        input["leaseId"].as_str().unwrap_or_default(),
-    )?;
+        .unwrap_or_default()
+        .to_owned();
+    let interaction_id = input["interactionId"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
+    let lease_id = input["leaseId"].as_str().unwrap_or_default().to_owned();
+    let store = rt.store().clone();
+    let release =
+        run_blocking(move || store.release_interaction_lease(&interaction_id, &rev, &lease_id))
+            .await?;
     Ok((
         ResponseOutcome::Succeeded,
         json!({
@@ -203,7 +242,9 @@ impl V1Store {
         ttl_ms: u64,
     ) -> Result<InteractionLeaseClaim, ContractError> {
         let mut conn = self.conn.lock().expect("sqlite mutex");
-        let tx = conn.transaction().map_err(map_sql)?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(map_sql)?;
         let target = fetch_interaction_target(&tx, interaction_id)?.ok_or_else(|| {
             lease_err(
                 CODE_NOT_FOUND,
@@ -250,8 +291,8 @@ impl V1Store {
             return Err(reconcile_err(
                 CODE_LEASE_CONFLICT,
                 format!(
-                    "interaction `{interaction_id}` is leased by `{}` until {}",
-                    lease.lease_id,
+                    "interaction `{interaction_id}` is currently leased ({}) until {}",
+                    public_lease_owner(&lease.lease_id),
                     ms_to_rfc3339(lease.lease_expires_ms)
                 ),
             ));
@@ -260,6 +301,7 @@ impl V1Store {
         let expires_ms = now + ttl_ms as i64;
         let new_rev = next_rev(&tx)?;
         let now_str = now_rfc3339();
+        let owner_tag = public_lease_owner(lease_id);
         tx.execute(
             "INSERT INTO interaction_leases (interaction_id, lease_id, lease_expires_ms, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?4)
@@ -270,11 +312,11 @@ impl V1Store {
             params![interaction_id, lease_id, expires_ms, now_str],
         )
         .map_err(map_sql)?;
-        // Mirror the holder into the S2-owned column so the fixed read path
-        // (interaction.get/list `leaseOwner`) reports it.
+        // Store an opaque non-secret owner tag in `interactions.lease_owner`
+        // so `interaction.get`/`list` never expose the fencing `leaseId`.
         tx.execute(
             "UPDATE interactions SET lease_owner = ?1, revision = ?2 WHERE interaction_id = ?3",
-            params![lease_id, new_rev, interaction_id],
+            params![owner_tag, new_rev, interaction_id],
         )
         .map_err(map_sql)?;
 
@@ -284,19 +326,17 @@ impl V1Store {
             revision: new_rev,
         };
         tx.commit().map_err(map_sql)?;
+        drop(conn);
+        self.state_notifier().notify_waiters();
         Ok(claim)
     }
 
     /// Releases the dialog edit lease on one interaction.
     ///
     /// Check order: resolve (`NOT_FOUND`) -> `expectedRevision`
-    /// (`REVISION_CONFLICT`) -> lease. A live lease held under a different
-    /// `leaseId` is `LEASE_CONFLICT` (旧 lease 不能释放新 owner). A matching
-    /// live lease is dropped and the revision bumped (`released: true`); no
-    /// live lease reports `released: false` with the revision untouched,
-    /// lazily deleting an expired lease row and correcting the stale
-    /// `lease_owner` mirror. The interaction's own state is deliberately not
-    /// inspected — release never answers or rejects the dialog.
+    /// (`REVISION_CONFLICT`) -> expired interaction (cleanup lease + mirror,
+    /// `released: false`) -> lease check (`LEASE_CONFLICT` on foreign live
+    /// lease; `released: true` on matching live lease).
     pub(crate) fn release_interaction_lease(
         &self,
         interaction_id: &str,
@@ -304,7 +344,9 @@ impl V1Store {
         lease_id: &str,
     ) -> Result<InteractionLeaseRelease, ContractError> {
         let mut conn = self.conn.lock().expect("sqlite mutex");
-        let tx = conn.transaction().map_err(map_sql)?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(map_sql)?;
         let target = fetch_interaction_target(&tx, interaction_id)?.ok_or_else(|| {
             lease_err(
                 CODE_NOT_FOUND,
@@ -320,6 +362,26 @@ impl V1Store {
                     target.revision
                 ),
             ));
+        }
+
+        if target.state == "expired" {
+            tx.execute(
+                "DELETE FROM interaction_leases WHERE interaction_id = ?1",
+                params![interaction_id],
+            )
+            .map_err(map_sql)?;
+            tx.execute(
+                "UPDATE interactions SET lease_owner = NULL WHERE interaction_id = ?1",
+                params![interaction_id],
+            )
+            .map_err(map_sql)?;
+            tx.commit().map_err(map_sql)?;
+            drop(conn);
+            self.state_notifier().notify_waiters();
+            return Ok(InteractionLeaseRelease {
+                released: false,
+                revision: target.revision,
+            });
         }
 
         let now = now_ms();
@@ -345,6 +407,8 @@ impl V1Store {
             )
             .map_err(map_sql)?;
             tx.commit().map_err(map_sql)?;
+            drop(conn);
+            self.state_notifier().notify_waiters();
             return Ok(InteractionLeaseRelease {
                 released: false,
                 revision: target.revision,
@@ -371,10 +435,89 @@ impl V1Store {
         )
         .map_err(map_sql)?;
         tx.commit().map_err(map_sql)?;
+        drop(conn);
+        self.state_notifier().notify_waiters();
         Ok(InteractionLeaseRelease {
             released: true,
             revision: new_rev,
         })
+    }
+}
+
+/// Coordination hook for `store.rs::respond_interaction` (#9): validates any
+/// live lease against `supplied_lease_id` (`LEASE_CONFLICT` if missing or
+/// mismatched), then deletes the lease row and clears `interactions.lease_owner`
+/// when the interaction transitions out of `pending`.
+pub(crate) fn validate_and_consume_lease_in_tx(
+    tx: &Connection,
+    interaction_id: &str,
+    supplied_lease_id: Option<&str>,
+) -> Result<(), ContractError> {
+    let now = now_ms();
+    if let Some(lease) = fetch_interaction_lease(tx, interaction_id)?
+        && lease.lease_expires_ms > now
+        && supplied_lease_id != Some(lease.lease_id.as_str())
+    {
+        return Err(reconcile_err(
+            CODE_LEASE_CONFLICT,
+            format!(
+                "interaction `{interaction_id}` holds an active edit lease; provide a matching leaseId or release it first"
+            ),
+        ));
+    }
+    tx.execute(
+        "DELETE FROM interaction_leases WHERE interaction_id = ?1",
+        params![interaction_id],
+    )
+    .map_err(map_sql)?;
+    tx.execute(
+        "UPDATE interactions SET lease_owner = NULL WHERE interaction_id = ?1",
+        params![interaction_id],
+    )
+    .map_err(map_sql)?;
+    Ok(())
+}
+
+/// Coordination hook for `store.rs` restart/expiry sweep (#9): prunes expired
+/// or non-pending rows from `interaction_leases` and clears stale
+/// `interactions.lease_owner` mirrors.
+pub(crate) fn cleanup_expired_leases_in_tx(tx: &Connection) -> Result<(), ContractError> {
+    let now = now_ms();
+    tx.execute(
+        "DELETE FROM interaction_leases
+         WHERE lease_expires_ms <= ?1
+            OR interaction_id IN (SELECT interaction_id FROM interactions WHERE state != 'pending')",
+        params![now],
+    )
+    .map_err(map_sql)?;
+    tx.execute(
+        "UPDATE interactions
+         SET lease_owner = NULL
+         WHERE lease_owner IS NOT NULL
+           AND interaction_id NOT IN (SELECT interaction_id FROM interaction_leases)",
+        [],
+    )
+    .map_err(map_sql)?;
+    Ok(())
+}
+
+/// Read-side coordination hook for `store.rs` (`interaction.get`/`list`) (#9):
+/// projects `leaseOwner` as `None` whenever the lease row is missing or expired,
+/// and never returns a raw `leaseId` fencing credential.
+pub(crate) fn effective_lease_owner(
+    conn: &Connection,
+    interaction_id: &str,
+    stored_owner: Option<String>,
+) -> Option<String> {
+    let now = now_ms();
+    if let Ok(Some(lease)) = fetch_interaction_lease(conn, interaction_id) {
+        if lease.lease_expires_ms > now {
+            Some(public_lease_owner(&lease.lease_id))
+        } else {
+            None
+        }
+    } else {
+        stored_owner.filter(|s| s.starts_with("lease-"))
     }
 }
 
@@ -666,9 +809,11 @@ mod tests {
         let rev1 = first["revision"].as_str().unwrap().to_owned();
         assert_ne!(rev1, rev);
 
-        // The S2 read path reports the holder through the leaseOwner mirror.
+        // The S2 read path reports an opaque non-secret owner tag instead of
+        // leaking the fencing `leaseId` credential (#9).
         let got = get_interaction(&fx, &iid).await;
-        assert_eq!(got["leaseOwner"], "lease-a");
+        assert_ne!(got["leaseOwner"], "lease-a");
+        assert_eq!(got["leaseOwner"], public_lease_owner("lease-a"));
         assert_eq!(got["state"], "pending");
 
         // Same lease id renews: new revision, lease kept.
@@ -680,16 +825,21 @@ mod tests {
             .expect("renew result matches the operation schema");
         let rev2 = renewed["revision"].as_str().unwrap().to_owned();
         assert_ne!(rev2, rev1);
-        assert_eq!(get_interaction(&fx, &iid).await["leaseOwner"], "lease-a");
+        assert_eq!(
+            get_interaction(&fx, &iid).await["leaseOwner"],
+            public_lease_owner("lease-a")
+        );
 
-        // A competing owner is rejected with zero side effects.
+        // A competing owner is rejected with zero side effects and without
+        // leaking the active `leaseId` inside the error message.
         let err = claim(&fx, &iid, &rev2, "lease-b", None)
             .await
             .expect_err("competing claim");
         assert_eq!(err.code, "LEASE_CONFLICT");
+        assert!(!err.message.contains("lease-a"));
         assert_eq!(err.effect, EffectStatus::NotApplied);
         let still = get_interaction(&fx, &iid).await;
-        assert_eq!(still["leaseOwner"], "lease-a");
+        assert_eq!(still["leaseOwner"], public_lease_owner("lease-a"));
         assert_eq!(still["revision"].as_str(), Some(rev2.as_str()));
 
         // Release drops the lease and only the lease: the dialog stays pending.
@@ -881,7 +1031,10 @@ mod tests {
             .await
             .expect("claim after expiry");
         let rev2 = second["revision"].as_str().unwrap().to_owned();
-        assert_eq!(get_interaction(&fx, &iid).await["leaseOwner"], "lease-b");
+        assert_eq!(
+            get_interaction(&fx, &iid).await["leaseOwner"],
+            public_lease_owner("lease-b")
+        );
 
         // The old lease cannot release the new owner (旧 lease 不能释放新
         // owner).
@@ -978,6 +1131,79 @@ mod tests {
             Err(DispatchError::Application(err)) => assert_eq!(err.code, "EXPIRED"),
             other => panic!("expected EXPIRED, got {other:?}"),
         }
+
+        // Releasing an interaction already in `expired` state cleans up the
+        // residual lease + lease_owner mirror and reports `released: false`
+        // regardless of leaseId (no false LEASE_CONFLICT or released: true).
+        let (_, rel_expired) = rt2
+            .dispatch(
+                "interaction.release",
+                json!({
+                    "interactionId": iid,
+                    "expectedRevision": rev_after_restart,
+                    "leaseId": "lease-foreign",
+                }),
+                None,
+                None,
+            )
+            .await
+            .expect("release on expired interaction");
+        assert_eq!(rel_expired["released"], false);
+        assert_eq!(rel_expired["revision"], rev_after_restart);
+        let (_, got_after) = rt2
+            .dispatch("interaction.get", json!({"interactionId": iid}), None, None)
+            .await
+            .unwrap();
+        assert_eq!(got_after["interaction"]["leaseOwner"], Value::Null);
         // `_tmp` stays bound until scope end, keeping the isolated home alive.
+    }
+
+    #[tokio::test]
+    async fn coordination_hooks_enforce_fencing_and_clean_expired_leases() {
+        let fx = fixture("ia-lease-hooks").await;
+        let (iid, rev) = seed_pending_question(&fx, "hooks");
+
+        let claimed = claim(&fx, &iid, &rev, "secret-lease-token", Some(60_000))
+            .await
+            .expect("claim");
+        let _rev1 = claimed["revision"].as_str().unwrap().to_owned();
+
+        // Wrong or omitted leaseId is rejected by validate_and_consume_lease_in_tx.
+        {
+            let mut conn = fx.rt.store().conn.lock().expect("sqlite mutex");
+            let tx = conn.transaction().unwrap();
+            let err_none = validate_and_consume_lease_in_tx(&tx, &iid, None).unwrap_err();
+            assert_eq!(err_none.code, CODE_LEASE_CONFLICT);
+            let err_wrong =
+                validate_and_consume_lease_in_tx(&tx, &iid, Some("other-token")).unwrap_err();
+            assert_eq!(err_wrong.code, CODE_LEASE_CONFLICT);
+            assert!(
+                effective_lease_owner(&tx, &iid, None)
+                    == Some(public_lease_owner("secret-lease-token"))
+            );
+
+            // Matching leaseId consumes the lease and clears lease_owner.
+            validate_and_consume_lease_in_tx(&tx, &iid, Some("secret-lease-token")).unwrap();
+            tx.commit().unwrap();
+        }
+        assert_eq!(get_interaction(&fx, &iid).await["leaseOwner"], Value::Null);
+
+        // cleanup_expired_leases_in_tx clears expired leases cleanly.
+        let (iid2, rev2) = seed_pending_question(&fx, "hooks-exp");
+        claim(&fx, &iid2, &rev2, "exp-secret", Some(200))
+            .await
+            .unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        {
+            let mut conn = fx.rt.store().conn.lock().expect("sqlite mutex");
+            let tx = conn.transaction().unwrap();
+            assert_eq!(
+                effective_lease_owner(&tx, &iid2, Some("lease-stale".to_owned())),
+                None
+            );
+            cleanup_expired_leases_in_tx(&tx).unwrap();
+            tx.commit().unwrap();
+        }
+        assert_eq!(get_interaction(&fx, &iid2).await["leaseOwner"], Value::Null);
     }
 }

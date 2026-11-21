@@ -77,8 +77,8 @@ use std::time::{Duration, Instant};
 
 use agentcpm_pd_protocol::contract::{EventEnvelope, ResponseOutcome};
 use agentcpm_pd_protocol::errors::{
-    CODE_CURSOR_EXPIRED, CODE_INVALID_ARGUMENT, CODE_RESOURCE_LIMIT, ContractError, EffectStatus,
-    RetrySpec,
+    CODE_CURSOR_EXPIRED, CODE_INVALID_ARGUMENT, CODE_RESOURCE_LIMIT, CODE_UNAVAILABLE,
+    ContractError, EffectStatus, RetrySpec,
 };
 use agentcpm_pd_protocol::wire::{
     JSONRPC_VERSION, JsonRpcNotification, SubEventNotification, WIRE_SUB_EVENT,
@@ -221,12 +221,22 @@ async fn resources_watch_unary(
     }
     // The page is the head of the frame sequence: the first resource's
     // current version, in a fresh epoch's cursor (see the module doc).
-    let store = rt.store();
+    let store = rt.store().clone();
     let epoch = format!("rwatch-{}", store.next_id());
-    let first = {
+    let target = resources[0].clone();
+    let first = tokio::task::spawn_blocking(move || {
         let conn = store.conn.lock().expect("sqlite mutex");
-        resolve_resource_version(&conn, &resources[0])?
-    };
+        resolve_resource_version(&store, &conn, &target)
+    })
+    .await
+    .map_err(|err| {
+        ContractError::new(
+            CODE_UNAVAILABLE,
+            format!("resources watch worker failed: {err}"),
+            RetrySpec::backoff_read(Some(250)),
+            EffectStatus::Unknown,
+        )
+    })??;
     Ok((
         ResponseOutcome::Succeeded,
         frame_data(&epoch, 0, "snapshot", &first, None),
@@ -292,11 +302,11 @@ fn transition_frame(
                 .get("kind")
                 .and_then(Value::as_str)
                 .unwrap_or_default();
-            if matches!(kind, "project" | "session") {
+            if matches!(kind, "project" | "session" | "files" | "git" | "memory") {
                 Some((
                     "authorizationChanged",
                     Some(format!(
-                        "the {kind} is no longer visible to the resolver; drop cached state \
+                        "the {kind} is no longer visible or authorized; drop cached state \
                          and re-read it"
                     )),
                 ))
@@ -422,7 +432,7 @@ impl StreamSource for ResourcesWatchSource {
             let conn = self.store.conn.lock().expect("sqlite mutex");
             while self.initial_index < self.resources.len() && frames.len() < batch {
                 let resource = self.resources[self.initial_index].clone();
-                let out = resolve_resource_version(&conn, &resource)?;
+                let out = resolve_resource_version(&self.store, &conn, &resource)?;
                 if self.include_initial_snapshot {
                     let sequence = self.next_seq;
                     self.next_seq += 1;
@@ -468,7 +478,7 @@ impl StreamSource for ResourcesWatchSource {
         self.last_poll = Some(Instant::now());
         let conn = self.store.conn.lock().expect("sqlite mutex");
         for watched in &mut self.watched {
-            let out = resolve_resource_version(&conn, &watched.resource)?;
+            let out = resolve_resource_version(&self.store, &conn, &watched.resource)?;
             if let Some((frame_type, reason)) = transition_frame(watched, &out) {
                 let sequence = self.next_seq;
                 self.next_seq += 1;
@@ -923,5 +933,281 @@ mod tests {
             DispatchError::Application(err) => assert_eq!(err.code, CODE_RESOURCE_LIMIT),
             other => panic!("expected RESOURCE_LIMIT, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn authorization_changed_emits_for_files_and_memory_on_project_remove() {
+        let fx = fixture("rwatch-authz-kinds");
+        let (_, created) = fx
+            .rt
+            .dispatch(
+                "project.create",
+                json!({
+                    "instanceId": fx.instance_id,
+                    "projectId": "p-authz",
+                    "parent": {"instanceId": fx.instance_id, "rootId": "default", "relativePath": ""},
+                    "directoryName": "authz-ws",
+                    "name": "Authz",
+                }),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let rev = created["project"]["revision"].as_str().unwrap().to_owned();
+
+        let mut src = source(
+            &fx,
+            json!({
+                "resources": [
+                    {"kind": "files", "projectId": "p-authz"},
+                    {"kind": "memory", "projectId": "p-authz"},
+                ]
+            }),
+        );
+        let init = src.fetch_next(256).unwrap();
+        assert_eq!(init.frames.len(), 2);
+        assert_eq!(
+            frame_parts(&init.frames[0]).1["snapshot"]["state"],
+            "present"
+        );
+        assert_eq!(
+            frame_parts(&init.frames[1]).1["snapshot"]["state"],
+            "present"
+        );
+
+        fx.rt
+            .dispatch(
+                "project.remove",
+                json!({
+                    "instanceId": fx.instance_id,
+                    "projectId": "p-authz",
+                    "expectedRevision": rev,
+                }),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+
+        tokio::time::sleep(POLL_INTERVAL + Duration::from_millis(100)).await;
+        let next = src.fetch_next(256).unwrap();
+        assert_eq!(next.frames.len(), 2);
+        for frame in &next.frames {
+            let (_env, data) = frame_parts(frame);
+            assert_eq!(data["type"], "authorizationChanged", "{data}");
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn silent_resources_watch_cuts_on_key_revocation() {
+        use futures_util::{SinkExt, StreamExt};
+        use tokio_tungstenite::tungstenite::Message;
+        use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+
+        type ClientWs = tokio_tungstenite::WebSocketStream<
+            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+        >;
+
+        async fn ws_connect(url: &str, cred: &str) -> ClientWs {
+            let mut req = url.into_client_request().unwrap();
+            req.headers_mut().insert(
+                "authorization",
+                tokio_tungstenite::tungstenite::http::HeaderValue::from_str(&format!(
+                    "Bearer {cred}"
+                ))
+                .unwrap(),
+            );
+            tokio_tungstenite::connect_async(req)
+                .await
+                .expect("ws connect")
+                .0
+        }
+
+        async fn ws_send(ws: &mut ClientWs, frame: &Value) {
+            ws.send(Message::Text(frame.to_string().into()))
+                .await
+                .unwrap();
+        }
+
+        async fn ws_wait_id(ws: &mut ClientWs, id: &str) -> Value {
+            tokio::time::timeout(Duration::from_secs(10), async {
+                loop {
+                    match ws.next().await.expect("open").expect("frame") {
+                        Message::Text(txt) => {
+                            let v: Value = serde_json::from_str(txt.as_str()).unwrap();
+                            if v.get("id").and_then(Value::as_str) == Some(id) {
+                                return v;
+                            }
+                        }
+                        Message::Close(f) => panic!("closed while waiting for {id}: {f:?}"),
+                        _ => {}
+                    }
+                }
+            })
+            .await
+            .expect("response timeout")
+        }
+
+        let tmp = TempDir::new("rwatch-revoke");
+        let root_dir = tmp.0.join("pd-home");
+        initialize_instance(&root_dir, None, Some("local"), Some(true)).unwrap();
+        let (_file, owner_token) = load_local_instance_and_token(&root_dir, None).unwrap();
+
+        let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
+        let server = tokio::spawn(crate::public_v1::bootstrap::serve_v1_gateway(
+            root_dir.clone(),
+            None,
+            crate::public_v1::bootstrap::default_loopback_addr(),
+            async move {
+                let _ = stop_rx.await;
+            },
+        ));
+
+        let ready_path = root_dir.join("run").join("ready.json");
+        let deadline = Instant::now() + Duration::from_secs(15);
+        let ws_url = loop {
+            if let Ok(raw) = std::fs::read_to_string(&ready_path)
+                && let Ok(ready) =
+                    serde_json::from_str::<crate::public_v1::bootstrap::ReadyFile>(&raw)
+            {
+                break ready.ws_url;
+            }
+            assert!(Instant::now() < deadline, "gateway did not become ready");
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        };
+
+        let mut owner = ws_connect(&ws_url, &owner_token).await;
+        ws_send(
+            &mut owner,
+            &json!({
+                "jsonrpc": "2.0",
+                "id": "init-owner",
+                "method": "initialize",
+                "params": {
+                    "abi_version": 1,
+                    "api_version": agentcpm_pd_protocol::contract::OPERATION_VERSION,
+                    "features": ["subscriptions"],
+                    "client": {"name": "rwatch-test", "version": "0.0.0"},
+                    "credential": owner_token,
+                }
+            }),
+        )
+        .await;
+        let _ = ws_wait_id(&mut owner, "init-owner").await;
+
+        ws_send(
+            &mut owner,
+            &json!({
+                "jsonrpc": "2.0",
+                "id": "ak-create",
+                "method": "access_key.create",
+                "params": {"input": {"keyId": "k-rwatch", "name": "watch key"}}
+            }),
+        )
+        .await;
+        let created = ws_wait_id(&mut owner, "ak-create").await;
+        let secret = created["result"]["result"]["secret"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let key_rev = created["result"]["result"]["key"]["revision"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+
+        let mut watcher = ws_connect(&ws_url, &secret).await;
+        ws_send(
+            &mut watcher,
+            &json!({
+                "jsonrpc": "2.0",
+                "id": "init-watch",
+                "method": "initialize",
+                "params": {
+                    "abi_version": 1,
+                    "api_version": agentcpm_pd_protocol::contract::OPERATION_VERSION,
+                    "features": ["subscriptions"],
+                    "client": {"name": "rwatch-sub", "version": "0.0.0"},
+                }
+            }),
+        )
+        .await;
+        let _ = ws_wait_id(&mut watcher, "init-watch").await;
+
+        ws_send(
+            &mut watcher,
+            &json!({
+                "jsonrpc": "2.0",
+                "id": "sub-watch",
+                "method": "sub.open",
+                "params": {
+                    "stream": "resources.watch",
+                    "input": {"resources": [{"kind": "projects"}]},
+                    "credit": 100
+                }
+            }),
+        )
+        .await;
+        let opened = ws_wait_id(&mut watcher, "sub-watch").await;
+        assert!(opened["result"]["subscriptionId"].is_string(), "{opened}");
+
+        // Wait for the initial snapshot event so the watch is silently idling.
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let Some(Ok(Message::Text(txt))) = watcher.next().await {
+                    let v: Value = serde_json::from_str(txt.as_str()).unwrap();
+                    if v.get("method").and_then(Value::as_str) == Some("sub.event") {
+                        break;
+                    }
+                }
+            }
+        })
+        .await
+        .expect("initial snapshot event");
+
+        // Revoke the watcher's key: silent watch stream must cut promptly with
+        // sub.end(terminal=error, code=UNAUTHENTICATED) + WebSocket Close.
+        ws_send(
+            &mut owner,
+            &json!({
+                "jsonrpc": "2.0",
+                "id": "ak-revoke",
+                "method": "access_key.revoke",
+                "params": {"input": {"keyId": "k-rwatch", "expectedRevision": key_rev}}
+            }),
+        )
+        .await;
+        let _ = ws_wait_id(&mut owner, "ak-revoke").await;
+
+        let mut saw_unauth = false;
+        let mut saw_close = false;
+        let cut_deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < cut_deadline {
+            match tokio::time::timeout(Duration::from_secs(3), watcher.next()).await {
+                Ok(Some(Ok(Message::Text(txt)))) => {
+                    let v: Value = serde_json::from_str(txt.as_str()).unwrap();
+                    if v.get("method").and_then(Value::as_str) == Some("sub.end")
+                        && v["params"]["terminal"] == "error"
+                        && v["params"]["error"]["code"] == "UNAUTHENTICATED"
+                    {
+                        saw_unauth = true;
+                    }
+                }
+                Ok(Some(Ok(Message::Close(_)))) | Ok(None) | Ok(Some(Err(_))) => {
+                    saw_close = true;
+                    break;
+                }
+                Ok(Some(Ok(_))) => {}
+                Err(_) => break,
+            }
+        }
+        assert!(
+            saw_unauth,
+            "revoked watcher must receive sub.end UNAUTHENTICATED"
+        );
+        assert!(saw_close, "revoked watcher WS connection must close");
+
+        let _ = stop_tx.send(());
+        let _ = server.await;
     }
 }

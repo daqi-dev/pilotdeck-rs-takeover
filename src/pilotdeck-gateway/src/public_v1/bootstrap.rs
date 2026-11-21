@@ -911,6 +911,15 @@ pub async fn serve_v1_gateway(
     };
     let store = V1Store::open_and_recover(&data_root, meta)?;
     let runtime = PublicV1Runtime::new(store);
+    let bg_runtime = Arc::new(crate::runtime::background::BackgroundTaskRuntime::new(
+        crate::runtime::background::BackgroundTaskRuntimeOptions {
+            disk_spill_dir: Some(data_root.join("v1").join("background-tasks")),
+            ..crate::runtime::background::BackgroundTaskRuntimeOptions::default()
+        },
+    ));
+    let _ = crate::public_v1::domains::background_tasks::attach_background_runtime(
+        &runtime, bg_runtime,
+    );
     // Start the scheduling machinery with the gateway itself: the scheduler
     // thread must live for the process lifetime, not just across a
     // `schedules.*` dispatch, and schedules configured before this gateway
@@ -1010,6 +1019,7 @@ pub async fn serve_v1_gateway(
     if drain_deadline.is_err() {
         conns.abort_all();
     }
+    crate::public_v1::domains::background_tasks::dispose_for_home(&data_root).await;
 
     // Remove ready.json only if it still points to our own PID.
     if let Ok(raw) = fs::read_to_string(&ready_path)

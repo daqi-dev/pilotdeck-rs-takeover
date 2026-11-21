@@ -76,9 +76,10 @@ use std::sync::Arc;
 use agentcpm_pd_protocol::contract::ResponseOutcome;
 use agentcpm_pd_protocol::envelope::compute_input_digest;
 use agentcpm_pd_protocol::errors::{
-    CODE_INVALID_ARGUMENT, CODE_REVISION_CONFLICT, ContractError, EffectStatus, RetrySpec,
+    CODE_CAPABILITY_UNAVAILABLE, CODE_INVALID_ARGUMENT, CODE_REVISION_CONFLICT, CODE_UNAVAILABLE,
+    ContractError, EffectStatus, RetrySpec,
 };
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde_json::{Value, json};
 
 use crate::public_v1::domains::DomainRegistry;
@@ -135,19 +136,32 @@ fn effective_revision(input: &Value, envelope_rev: Option<&str>) -> String {
         .to_owned()
 }
 
+async fn run_blocking<T, F>(task: F) -> Result<T, ContractError>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, ContractError> + Send + 'static,
+{
+    tokio::task::spawn_blocking(task).await.map_err(|err| {
+        ContractError::new(
+            CODE_UNAVAILABLE,
+            format!("queue admin worker failed: {err}"),
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        )
+    })?
+}
+
 async fn queue_pause(
     rt: Arc<PublicV1Runtime>,
     input: Value,
     expected_revision: Option<String>,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
-    Ok((
-        ResponseOutcome::Succeeded,
-        rt.store().pause_queue(
-            input["sessionId"].as_str().unwrap_or_default(),
-            &effective_revision(&input, expected_revision.as_deref()),
-            input["reason"].as_str().unwrap_or_default(),
-        )?,
-    ))
+    let session_id = input["sessionId"].as_str().unwrap_or_default().to_owned();
+    let expected_rev = effective_revision(&input, expected_revision.as_deref());
+    let reason = input["reason"].as_str().unwrap_or_default().to_owned();
+    let result =
+        run_blocking(move || rt.store().pause_queue(&session_id, &expected_rev, &reason)).await?;
+    Ok((ResponseOutcome::Succeeded, result))
 }
 
 async fn queue_move(
@@ -155,15 +169,23 @@ async fn queue_move(
     input: Value,
     expected_revision: Option<String>,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
-    Ok((
-        ResponseOutcome::Succeeded,
+    let session_id = input["sessionId"].as_str().unwrap_or_default().to_owned();
+    let run_id = input["runId"].as_str().unwrap_or_default().to_owned();
+    let expected_rev = effective_revision(&input, expected_revision.as_deref());
+    let before_run_id = input
+        .get("beforeRunId")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned);
+    let result = run_blocking(move || {
         rt.store().move_queue_item(
-            input["sessionId"].as_str().unwrap_or_default(),
-            input["runId"].as_str().unwrap_or_default(),
-            &effective_revision(&input, expected_revision.as_deref()),
-            input.get("beforeRunId").and_then(Value::as_str),
-        )?,
-    ))
+            &session_id,
+            &run_id,
+            &expected_rev,
+            before_run_id.as_deref(),
+        )
+    })
+    .await?;
+    Ok((ResponseOutcome::Succeeded, result))
 }
 
 async fn queue_remove(
@@ -171,11 +193,14 @@ async fn queue_remove(
     input: Value,
     expected_revision: Option<String>,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
-    let outcome = rt.store().remove_queue_item(
-        input["sessionId"].as_str().unwrap_or_default(),
-        input["runId"].as_str().unwrap_or_default(),
-        &effective_revision(&input, expected_revision.as_deref()),
-    )?;
+    let session_id = input["sessionId"].as_str().unwrap_or_default().to_owned();
+    let run_id = input["runId"].as_str().unwrap_or_default().to_owned();
+    let expected_rev = effective_revision(&input, expected_revision.as_deref());
+    let outcome = run_blocking(move || {
+        rt.store()
+            .remove_queue_item(&session_id, &run_id, &expected_rev)
+    })
+    .await?;
     Ok((
         ResponseOutcome::Succeeded,
         json!({
@@ -190,13 +215,23 @@ async fn queue_promote_to_steer(
     input: Value,
     expected_revision: Option<String>,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
-    let outcome = rt.store().promote_queued_run_to_steer(
-        input["sessionId"].as_str().unwrap_or_default(),
-        input["queuedRunId"].as_str().unwrap_or_default(),
-        input["activeRunId"].as_str().unwrap_or_default(),
-        input["steerId"].as_str().unwrap_or_default(),
-        &effective_revision(&input, expected_revision.as_deref()),
-    )?;
+    let session_id = input["sessionId"].as_str().unwrap_or_default().to_owned();
+    let queued_run_id = input["queuedRunId"].as_str().unwrap_or_default().to_owned();
+    let active_run_id = input["activeRunId"].as_str().unwrap_or_default().to_owned();
+    let steer_id = input["steerId"].as_str().unwrap_or_default().to_owned();
+    let expected_rev = effective_revision(&input, expected_revision.as_deref());
+    let supports_steer = rt.supports_steer();
+    let outcome = run_blocking(move || {
+        rt.store().promote_queued_run_to_steer_with_capability(
+            &session_id,
+            &queued_run_id,
+            &active_run_id,
+            &steer_id,
+            &expected_rev,
+            supports_steer,
+        )
+    })
+    .await?;
     Ok((
         ResponseOutcome::Succeeded,
         json!({
@@ -340,14 +375,40 @@ impl V1Store {
         reason: &str,
     ) -> Result<Value, ContractError> {
         let mut conn = self.conn.lock().expect("sqlite mutex");
-        let tx = conn.transaction().map_err(sql_err)?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sql_err)?;
         let (queue_revision, _) = load_queue_face_in_tx(&tx, session_id)?;
         ensure_queue_revision(expected_revision, &queue_revision)?;
+        let stale_pin: bool = tx
+            .query_row(
+                "SELECT COALESCE(
+                    (SELECT r.state = 'queued' OR r.terminal != 0
+                     FROM runs r WHERE r.run_id = s.active_run_id),
+                    1
+                 )
+                 FROM sessions s
+                 WHERE s.session_id = ?1 AND s.active_run_id IS NOT NULL",
+                params![session_id],
+                |r| r.get::<_, i64>(0).map(|v| v != 0),
+            )
+            .optional()
+            .map_err(sql_err)?
+            .unwrap_or(false);
         let new_rev = bump_rev_in_tx(&tx)?;
         tx.execute(
-            "UPDATE sessions SET queue_paused = 1, pause_reason = ?1, queue_revision = ?2
-             WHERE session_id = ?3",
-            params![reason, new_rev, session_id],
+            "UPDATE sessions
+             SET queue_paused = 1,
+                 pause_reason = ?1,
+                 queue_revision = ?2,
+                 active_run_id = CASE WHEN ?3 != 0 THEN NULL ELSE active_run_id END
+             WHERE session_id = ?4",
+            params![
+                reason,
+                new_rev,
+                if stale_pin { 1i64 } else { 0i64 },
+                session_id
+            ],
         )
         .map_err(sql_err)?;
         tx.commit().map_err(sql_err)?;
@@ -366,7 +427,9 @@ impl V1Store {
         before_run_id: Option<&str>,
     ) -> Result<Value, ContractError> {
         let mut conn = self.conn.lock().expect("sqlite mutex");
-        let tx = conn.transaction().map_err(sql_err)?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sql_err)?;
         let (queue_revision, _) = load_queue_face_in_tx(&tx, session_id)?;
         ensure_queue_revision(expected_revision, &queue_revision)?;
 
@@ -444,7 +507,9 @@ impl V1Store {
         expected_revision: &str,
     ) -> Result<RemoveQueueItemOutcome, ContractError> {
         let mut conn = self.conn.lock().expect("sqlite mutex");
-        let tx = conn.transaction().map_err(sql_err)?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sql_err)?;
         let (queue_revision, _) = load_queue_face_in_tx(&tx, session_id)?;
         ensure_queue_revision(expected_revision, &queue_revision)?;
 
@@ -503,6 +568,7 @@ impl V1Store {
 
     /// `queue.promote_to_steer`：一个事务内原子完成校验、steer 建立与排队
     /// 资格移除（postcondition「原子建立steer与移除排队资格」）。
+    #[allow(dead_code)]
     pub(crate) fn promote_queued_run_to_steer(
         &self,
         session_id: &str,
@@ -511,8 +577,38 @@ impl V1Store {
         steer_id: &str,
         expected_revision: &str,
     ) -> Result<PromoteToSteerOutcome, ContractError> {
+        self.promote_queued_run_to_steer_with_capability(
+            session_id,
+            queued_run_id,
+            active_run_id,
+            steer_id,
+            expected_revision,
+            crate::public_v1::run_driver::offline_directives_enabled(),
+        )
+    }
+
+    pub(crate) fn promote_queued_run_to_steer_with_capability(
+        &self,
+        session_id: &str,
+        queued_run_id: &str,
+        active_run_id: &str,
+        steer_id: &str,
+        expected_revision: &str,
+        supports_steer: bool,
+    ) -> Result<PromoteToSteerOutcome, ContractError> {
+        if !supports_steer {
+            return Err(ContractError::new(
+                CODE_CAPABILITY_UNAVAILABLE,
+                "active run driver does not support mid-run steer injection",
+                RetrySpec::never(),
+                EffectStatus::NotApplied,
+            ));
+        }
+
         let mut conn = self.conn.lock().expect("sqlite mutex");
-        let tx = conn.transaction().map_err(sql_err)?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sql_err)?;
         let (queue_revision, _) = load_queue_face_in_tx(&tx, session_id)?;
         ensure_queue_revision(expected_revision, &queue_revision)?;
 
@@ -524,8 +620,23 @@ impl V1Store {
         if items[src].1 != "queued" {
             return Err(run_already_started(queued_run_id));
         }
+        // P0 #1: 自引导防呆（queue.resume 可把尚处 queued 的头 run pin 为
+        // active_run_id；此时 queuedRunId == activeRunId 绝不能把同一 run
+        // 既取消为 CONVERTED_TO_STEER 又给它自己写入 steer）。
+        if queued_run_id == active_run_id {
+            return Err(ContractError::new(
+                CODE_INVALID_ARGUMENT,
+                format!(
+                    "queuedRunId `{queued_run_id}` and activeRunId `{active_run_id}` \
+                     cannot refer to the same run"
+                ),
+                RetrySpec::never(),
+                EffectStatus::NotApplied,
+            ));
+        }
 
-        // 2. activeRunId：目标必须存在、非终态、且是本会话当前 active run。
+        // 2. activeRunId：目标必须存在、非终态、正在执行（running/waiting），
+        //    且是本会话当前 active run。
         let active_run: Option<(String, String, i64)> = tx
             .query_row(
                 "SELECT session_id, state, terminal FROM runs WHERE run_id = ?1",
@@ -537,12 +648,12 @@ impl V1Store {
         let Some((ar_session, ar_state, ar_terminal)) = active_run else {
             return Err(domain_not_found("run", active_run_id));
         };
-        // acceptance「目标结束…时队列不变」。
-        if ar_terminal != 0 {
+        // acceptance「目标结束…时队列不变」（cancelling 也视为不可再引导）。
+        if ar_terminal != 0 || ar_state == "cancelling" {
             return Err(ContractError::new(
                 CODE_RUN_TERMINAL,
                 format!(
-                    "target run `{active_run_id}` is terminal ({ar_state}); \
+                    "target run `{active_run_id}` is terminal or cancelling ({ar_state}); \
                      a queued run can only be steered into a live run"
                 ),
                 RetrySpec::never(),
@@ -558,11 +669,14 @@ impl V1Store {
             .optional()
             .map_err(sql_err)?
             .flatten();
-        if ar_session != session_id || pinned_active.as_deref() != Some(active_run_id) {
+        if ar_session != session_id
+            || pinned_active.as_deref() != Some(active_run_id)
+            || !matches!(ar_state.as_str(), "running" | "waiting")
+        {
             return Err(ContractError::new(
                 CODE_INVALID_ARGUMENT,
                 format!(
-                    "activeRunId `{active_run_id}` is not the active run of session `{session_id}`"
+                    "activeRunId `{active_run_id}` is not a live active run (`{ar_state}`) of session `{session_id}`"
                 ),
                 RetrySpec::never(),
                 EffectStatus::NotApplied,
@@ -1709,5 +1823,212 @@ mod tests {
             "INVALID_ARGUMENT",
             "steerId 重复必须拒绝"
         );
+    }
+
+    #[tokio::test]
+    async fn promote_refuses_self_promote_and_queued_or_cancelling_targets() {
+        let (_tmp, root_dir) = fresh_home("qa-p0-self");
+        let (rt, iid) = open_runtime(&root_dir);
+        let sid = seeded(&rt, &iid, "qap0").await;
+
+        let qrev0 = queue_state(&rt, &iid, &sid).await["revision"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        rt.dispatch(
+            "queue.pause",
+            json!({"instanceId": iid, "sessionId": sid, "expectedRevision": qrev0, "reason": "hold"}),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let q1 = submit_run(&rt, &iid, &sid, "q1", "qap0-q1").await;
+        let q2 = submit_run(&rt, &iid, &sid, "q2", "qap0-q2").await;
+
+        // 模拟 queue.resume 或状态迁移遗留的 pinned-but-queued active_run_id = q1。
+        {
+            let conn = rt.store().conn.lock().expect("sqlite mutex");
+            conn.execute(
+                "UPDATE sessions SET active_run_id = ?1 WHERE session_id = ?2",
+                params![q1, sid],
+            )
+            .unwrap();
+        }
+        let qrev1 = queue_state(&rt, &iid, &sid).await["revision"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+
+        // 1) Self-promote (queuedRunId == activeRunId == q1) 必须拒绝且保持队列与 steers 完整。
+        let err = rt
+            .dispatch(
+                "queue.promote_to_steer",
+                json!({
+                    "instanceId": iid,
+                    "sessionId": sid,
+                    "queuedRunId": q1,
+                    "activeRunId": q1,
+                    "expectedRevision": qrev1,
+                    "steerId": "st-self"
+                }),
+                None,
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(contract_code(&err), "INVALID_ARGUMENT");
+
+        // 2) Targeting a still-queued pinned activeRunId (`q2 -> q1`) 也必须拒绝。
+        let err = rt
+            .dispatch(
+                "queue.promote_to_steer",
+                json!({
+                    "instanceId": iid,
+                    "sessionId": sid,
+                    "queuedRunId": q2,
+                    "activeRunId": q1,
+                    "expectedRevision": qrev1,
+                    "steerId": "st-queued-target"
+                }),
+                None,
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(contract_code(&err), "INVALID_ARGUMENT");
+
+        // 3) 若 target 处于 `cancelling`，必须以 RUN_TERMINAL 拒绝并保持不落盘。
+        {
+            let conn = rt.store().conn.lock().expect("sqlite mutex");
+            conn.execute(
+                "UPDATE runs SET state = 'cancelling', terminal = 0 WHERE run_id = ?1",
+                params![q1],
+            )
+            .unwrap();
+        }
+        let err = rt
+            .dispatch(
+                "queue.promote_to_steer",
+                json!({
+                    "instanceId": iid,
+                    "sessionId": sid,
+                    "queuedRunId": q2,
+                    "activeRunId": q1,
+                    "expectedRevision": qrev1,
+                    "steerId": "st-cancelling-target"
+                }),
+                None,
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(contract_code(&err), "RUN_TERMINAL");
+
+        {
+            let conn = rt.store().conn.lock().expect("sqlite mutex");
+            let steer_count: i64 = conn
+                .query_row("SELECT COUNT(*) FROM steers", [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(steer_count, 0);
+            let q2_state: String = conn
+                .query_row(
+                    "SELECT state FROM runs WHERE run_id = ?1",
+                    params![q2],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(q2_state, "queued");
+        }
+    }
+
+    #[tokio::test]
+    async fn promote_refuses_capability_unavailable_without_mutating_queue() {
+        let (_tmp, root_dir) = fresh_home("qa-cap");
+        let (rt, iid) = open_runtime(&root_dir);
+        let sid = seeded(&rt, &iid, "qacap").await;
+
+        let head = submit_run(&rt, &iid, &sid, "[pd-driver:sleep=60000]", "qacap-h").await;
+        wait_running(&rt, &iid, &head).await;
+        let q1 = submit_run(&rt, &iid, &sid, "queued-1", "qacap-q1").await;
+
+        let qrev = queue_state(&rt, &iid, &sid).await["revision"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let err = rt
+            .store()
+            .promote_queued_run_to_steer_with_capability(&sid, &q1, &head, "st-cap", &qrev, false)
+            .err()
+            .expect("unsupported steer must fail with CAPABILITY_UNAVAILABLE");
+        assert_eq!(err.code, CODE_CAPABILITY_UNAVAILABLE);
+
+        let after = queue_state(&rt, &iid, &sid).await;
+        assert_eq!(after["revision"], qrev);
+        assert!(queue_run_ids(&after).contains(&q1));
+        let steer_count: i64 = rt
+            .store()
+            .conn
+            .lock()
+            .expect("sqlite mutex")
+            .query_row("SELECT COUNT(*) FROM steers", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(steer_count, 0);
+    }
+
+    #[tokio::test]
+    async fn pause_clears_stale_queued_pin_and_continue_bumps_queue_revision() {
+        let (_tmp, root_dir) = fresh_home("qa-qrev");
+        let (rt, iid) = open_runtime(&root_dir);
+        let sid = seeded(&rt, &iid, "qaqr").await;
+
+        // 构造一个被 pin 成 active 但处于 queued 状态的陈旧 pin，pause 应清理它。
+        let qrev0 = queue_state(&rt, &iid, &sid).await["revision"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        rt.dispatch(
+            "queue.pause",
+            json!({"instanceId": iid, "sessionId": sid, "expectedRevision": qrev0, "reason": "hold-1"}),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let q_idle = submit_run(&rt, &iid, &sid, "idle", "qaqr-q1").await;
+        {
+            let conn = rt.store().conn.lock().expect("sqlite mutex");
+            conn.execute(
+                "UPDATE sessions SET active_run_id = ?1 WHERE session_id = ?2",
+                params![q_idle, sid],
+            )
+            .unwrap();
+        }
+        let qrev1 = queue_state(&rt, &iid, &sid).await["revision"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        rt.dispatch(
+            "queue.pause",
+            json!({"instanceId": iid, "sessionId": sid, "expectedRevision": qrev1, "reason": "hold-2"}),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        {
+            let conn = rt.store().conn.lock().expect("sqlite mutex");
+            let pin: Option<String> = conn
+                .query_row(
+                    "SELECT active_run_id FROM sessions WHERE session_id = ?1",
+                    params![sid],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(
+                pin, None,
+                "pause_queue must clear stale queued active_run_id"
+            );
+        }
     }
 }

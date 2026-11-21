@@ -83,6 +83,7 @@ async fn approval_respond(
         rev,
         json!({"decision": decision, "rememberScope": remember}),
         Some(remember),
+        None,
     )?;
     if res.should_wake_run {
         rt.notify_interaction_resolved(
@@ -109,12 +110,14 @@ async fn interaction_respond(
         .or_else(|| input.get("expectedRevision").and_then(Value::as_str))
         .unwrap_or_default();
     let answer = input.get("answer").cloned().unwrap_or(Value::Null);
+    let lease_id = input.get("leaseId").and_then(Value::as_str);
     let res = rt.store().respond_interaction(
         input["interactionId"].as_str().unwrap_or_default(),
         None,
         rev,
         answer,
         None,
+        lease_id,
     )?;
     if res.should_wake_run {
         rt.notify_interaction_resolved(

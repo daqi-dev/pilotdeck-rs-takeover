@@ -11,16 +11,19 @@
 //! `run.submit` consults so a closed session answers `SESSION_CLOSED`
 //! instead of admitting a new run.
 
+use std::path::Path;
 use std::sync::Arc;
 
 use agentcpm_pd_protocol::contract::ResponseOutcome;
 use agentcpm_pd_protocol::errors::{
-    CODE_INVALID_ARGUMENT, CODE_REVISION_CONFLICT, ContractError, EffectStatus, RetrySpec,
+    CODE_INVALID_ARGUMENT, CODE_REVISION_CONFLICT, CODE_UNAVAILABLE, ContractError, EffectStatus,
+    RetrySpec,
 };
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde_json::{Value, json};
 
 use crate::public_v1::domains::DomainRegistry;
+use crate::public_v1::domains::background_tasks::has_active_tasks_for_sessions;
 use crate::public_v1::domains::workspace_dirs::{
     CODE_ACTIVE_RESOURCES, append_domain_event_in_tx, bump_rev_in_tx, domain_not_found, sql_err,
 };
@@ -47,44 +50,55 @@ pub(super) fn register(reg: &mut DomainRegistry) {
     });
 }
 
+async fn run_blocking<T, F>(task: F) -> Result<T, ContractError>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, ContractError> + Send + 'static,
+{
+    tokio::task::spawn_blocking(task).await.map_err(|e| {
+        ContractError::new(
+            CODE_UNAVAILABLE,
+            format!("session admin worker failed: {e}"),
+            RetrySpec::backoff_read(Some(250)),
+            EffectStatus::Unknown,
+        )
+    })?
+}
+
 async fn session_update(
     rt: Arc<PublicV1Runtime>,
     input: Value,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
-    Ok((
-        ResponseOutcome::Succeeded,
-        rt.store().update_session(&input)?,
-    ))
+    let store = rt.store().clone();
+    let result = run_blocking(move || store.update_session(&input)).await?;
+    Ok((ResponseOutcome::Succeeded, result))
 }
 
 async fn session_close(
     rt: Arc<PublicV1Runtime>,
     input: Value,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
-    Ok((
-        ResponseOutcome::Succeeded,
-        rt.store().close_session(&input)?,
-    ))
+    let store = rt.store().clone();
+    let result = run_blocking(move || store.close_session(&input)).await?;
+    Ok((ResponseOutcome::Succeeded, result))
 }
 
 async fn session_reopen(
     rt: Arc<PublicV1Runtime>,
     input: Value,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
-    Ok((
-        ResponseOutcome::Succeeded,
-        rt.store().reopen_session(&input)?,
-    ))
+    let store = rt.store().clone();
+    let result = run_blocking(move || store.reopen_session(&input)).await?;
+    Ok((ResponseOutcome::Succeeded, result))
 }
 
 async fn session_delete(
     rt: Arc<PublicV1Runtime>,
     input: Value,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
-    Ok((
-        ResponseOutcome::Succeeded,
-        rt.store().delete_session(&input)?,
-    ))
+    let store = rt.store().clone();
+    let result = run_blocking(move || store.delete_session(&input)).await?;
+    Ok((ResponseOutcome::Succeeded, result))
 }
 
 // ---------------------------------------------------------------------------
@@ -156,21 +170,34 @@ fn revision_conflict(expected: &str, actual: &str) -> ContractError {
     )
 }
 
-/// `ACTIVE_RESOURCES` when the session still has an active (non-terminal)
-/// or queued run.
+/// `ACTIVE_RESOURCES` when the session still has active runs, queued runs,
+/// non-terminal operations, enabled schedules, or active background tasks.
 fn active_resources(session_id: &str) -> ContractError {
     ContractError::new(
         CODE_ACTIVE_RESOURCES,
         format!(
-            "session `{session_id}` still has an active or queued run; \
-             cancel or wait for it first"
+            "session `{session_id}` still has active resources (runs, operations, schedules, or background tasks); \
+             stop or wait for them first"
         ),
         RetrySpec::after_reconcile(),
         EffectStatus::NotApplied,
     )
 }
 
-fn has_active_or_queued_runs(conn: &Connection, session_id: &str) -> Result<bool, ContractError> {
+fn table_exists(conn: &Connection, table: &str) -> Result<bool, ContractError> {
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
+        params![table],
+        |r| r.get(0),
+    )
+    .map_err(sql_err)
+}
+
+fn has_active_session_resources(
+    home: &Path,
+    conn: &Connection,
+    session_id: &str,
+) -> Result<bool, ContractError> {
     let active: i64 = conn
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM runs WHERE session_id = ?1 AND terminal = 0)
@@ -179,14 +206,61 @@ fn has_active_or_queued_runs(conn: &Connection, session_id: &str) -> Result<bool
             |r| r.get(0),
         )
         .map_err(sql_err)?;
-    Ok(active != 0)
+    if active != 0 {
+        return Ok(true);
+    }
+
+    if table_exists(conn, "operations")? {
+        let op_active: i64 = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM operations WHERE session_id = ?1 AND terminal = 0)",
+                params![session_id],
+                |r| r.get(0),
+            )
+            .map_err(sql_err)?;
+        if op_active != 0 {
+            return Ok(true);
+        }
+    }
+
+    if table_exists(conn, "v1_schedules")? {
+        let sched_active: i64 = conn
+            .query_row(
+                "SELECT EXISTS(
+                    SELECT 1 FROM v1_schedules
+                    WHERE session_id = ?1 AND enabled != 0)",
+                params![session_id],
+                |r| r.get(0),
+            )
+            .map_err(sql_err)?;
+        if sched_active != 0 {
+            return Ok(true);
+        }
+        if table_exists(conn, "v1_schedule_executions")? {
+            let exec_active: i64 = conn
+                .query_row(
+                    "SELECT EXISTS(
+                        SELECT 1 FROM v1_schedule_executions e
+                        JOIN v1_schedules s ON s.schedule_id = e.schedule_id
+                        WHERE s.session_id = ?1 AND e.state IN ('pending', 'running'))",
+                    params![session_id],
+                    |r| r.get(0),
+                )
+                .map_err(sql_err)?;
+            if exec_active != 0 {
+                return Ok(true);
+            }
+        }
+    }
+
+    if has_active_tasks_for_sessions(home, &[session_id.to_owned()]) {
+        return Ok(true);
+    }
+
+    Ok(false)
 }
 
 impl V1Store {
-    /// The admission gate `run.submit` consults (t012): a closed session
-    /// answers `SESSION_CLOSED`; a missing or deleted session answers
-    /// `NOT_FOUND` — matching what `submit_run` itself already reports for
-    /// unknown sessions.
     /// `session.update`: conditional rename / retag. History identity is
     /// untouched (only the session row's display fields and revision move).
     pub(crate) fn update_session(&self, input: &Value) -> Result<Value, ContractError> {
@@ -195,7 +269,9 @@ impl V1Store {
         let new_name = input.get("name").and_then(Value::as_str);
         let new_tags = input.get("tags").and_then(Value::as_array);
         let mut conn = self.conn.lock().expect("sqlite mutex");
-        let tx = conn.transaction().map_err(sql_err)?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sql_err)?;
         let row = session_not_found_or_deleted(session_id, fetch_session_row(&tx, session_id)?)?;
         if row.revision != expected {
             return Err(revision_conflict(expected, &row.revision));
@@ -222,6 +298,9 @@ impl V1Store {
             &now,
         )?;
         tx.commit().map_err(sql_err)?;
+        drop(conn);
+        self.event_notifier().notify_waiters();
+        self.state_notifier().notify_waiters();
         Ok(json!({"session": {
             "sessionId": session_id,
             "projectId": row.project_id,
@@ -233,14 +312,16 @@ impl V1Store {
         }}))
     }
 
-    /// `session.close`: refuses while active/queued runs exist; after the
-    /// close, submissions answer `SESSION_CLOSED` but history stays
-    /// readable.
+    /// `session.close`: refuses while active/queued runs or active operations/
+    /// schedules/background tasks exist; after the close, submissions answer
+    /// `SESSION_CLOSED` but history stays readable.
     pub(crate) fn close_session(&self, input: &Value) -> Result<Value, ContractError> {
         let session_id = input["sessionId"].as_str().unwrap_or_default();
         let expected = input["expectedRevision"].as_str().unwrap_or_default();
         let mut conn = self.conn.lock().expect("sqlite mutex");
-        let tx = conn.transaction().map_err(sql_err)?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sql_err)?;
         let row = session_not_found_or_deleted(session_id, fetch_session_row(&tx, session_id)?)?;
         if row.revision != expected {
             return Err(revision_conflict(expected, &row.revision));
@@ -253,7 +334,7 @@ impl V1Store {
                 EffectStatus::NotApplied,
             ));
         }
-        if has_active_or_queued_runs(&tx, session_id)? {
+        if has_active_session_resources(self.home(), &tx, session_id)? {
             return Err(active_resources(session_id));
         }
         let rev = bump_rev_in_tx(&tx)?;
@@ -263,20 +344,23 @@ impl V1Store {
         )
         .map_err(sql_err)?;
         tx.commit().map_err(sql_err)?;
+        drop(conn);
+        self.state_notifier().notify_waiters();
         let mut after = row;
         after.revision = rev;
         after.session_state = "closed".to_owned();
         Ok(json!({"session": session_row_json(session_id, &after)}))
     }
 
-    /// `session.reopen`: refuses deleted sessions (`SESSION_DELETED`) and
-    /// already-open sessions; never re-runs old runs (terminal runs stay
-    /// terminal, the queue stays as it was).
+    /// `session.reopen`: refuses deleted sessions (`SESSION_DELETED`), removed
+    /// projects (`NOT_FOUND`), and already-open sessions; never re-runs old runs.
     pub(crate) fn reopen_session(&self, input: &Value) -> Result<Value, ContractError> {
         let session_id = input["sessionId"].as_str().unwrap_or_default();
         let expected = input["expectedRevision"].as_str().unwrap_or_default();
         let mut conn = self.conn.lock().expect("sqlite mutex");
-        let tx = conn.transaction().map_err(sql_err)?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sql_err)?;
         let row = fetch_session_row(&tx, session_id)?;
         let Some(row) = row else {
             return Err(domain_not_found("session", session_id));
@@ -303,6 +387,16 @@ impl V1Store {
         if row.revision != expected {
             return Err(revision_conflict(expected, &row.revision));
         }
+        let project_exists: bool = tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM projects WHERE project_id = ?1)",
+                params![row.project_id],
+                |r| r.get(0),
+            )
+            .map_err(sql_err)?;
+        if !project_exists {
+            return Err(domain_not_found("project", &row.project_id));
+        }
         let rev = bump_rev_in_tx(&tx)?;
         tx.execute(
             "UPDATE sessions SET session_state = 'open', revision = ?1 WHERE session_id = ?2",
@@ -310,21 +404,24 @@ impl V1Store {
         )
         .map_err(sql_err)?;
         tx.commit().map_err(sql_err)?;
+        drop(conn);
+        self.state_notifier().notify_waiters();
         let mut after = row;
         after.revision = rev;
         after.session_state = "open".to_owned();
         Ok(json!({"session": session_row_json(session_id, &after)}))
     }
 
-    /// `session.delete`: refuses while active/queued runs exist; marks the
-    /// session as a deleted tombstone, keeping runs (dedup tombstones) and
-    /// history rows for retention. The returned `revision` is the fresh
-    /// tombstone revision.
+    /// `session.delete`: refuses while active/queued runs or active operations/
+    /// schedules/background tasks exist; marks the session as a deleted
+    /// tombstone, keeping runs (dedup tombstones) and history rows for retention.
     pub(crate) fn delete_session(&self, input: &Value) -> Result<Value, ContractError> {
         let session_id = input["sessionId"].as_str().unwrap_or_default();
         let expected = input["expectedRevision"].as_str().unwrap_or_default();
         let mut conn = self.conn.lock().expect("sqlite mutex");
-        let tx = conn.transaction().map_err(sql_err)?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sql_err)?;
         let row = fetch_session_row(&tx, session_id)?;
         let Some(row) = row else {
             return Err(domain_not_found("session", session_id));
@@ -335,7 +432,7 @@ impl V1Store {
         if row.revision != expected {
             return Err(revision_conflict(expected, &row.revision));
         }
-        if has_active_or_queued_runs(&tx, session_id)? {
+        if has_active_session_resources(self.home(), &tx, session_id)? {
             return Err(active_resources(session_id));
         }
         let rev = bump_rev_in_tx(&tx)?;
@@ -346,6 +443,8 @@ impl V1Store {
         )
         .map_err(sql_err)?;
         tx.commit().map_err(sql_err)?;
+        drop(conn);
+        self.state_notifier().notify_waiters();
         Ok(json!({
             "deletedSessionId": session_id,
             "revision": rev,
@@ -767,5 +866,222 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(contract_code(&error), "NOT_FOUND");
+    }
+
+    #[tokio::test]
+    async fn concurrent_run_submit_vs_close_or_delete_and_idempotent_replay() {
+        let tmp = TempDir::new("sess-race-10");
+        let root_dir = tmp.0.join("pd-home");
+        initialize_instance(&root_dir, None, Some("local"), Some(true)).unwrap();
+        let (rt, iid) = open_runtime(&root_dir);
+
+        // Case A: concurrent run.submit vs session.close (never both succeeding
+        // with an active run inside a closed session).
+        let (_pid, sid_a, rev_a) = seeded(&rt, &iid, "racea").await;
+        let submit_a = rt.dispatch(
+            "run.submit",
+            json!({
+                "instanceId": iid,
+                "sessionId": sid_a,
+                "input": [{"kind": "text", "text": "[pd-driver:sleep=60000]"}],
+            }),
+            Some("race-submit-a"),
+            None,
+        );
+        let close_a = rt.dispatch(
+            "session.close",
+            json!({"instanceId": iid, "sessionId": sid_a, "expectedRevision": rev_a}),
+            None,
+            None,
+        );
+        let (s_res, c_res) = tokio::join!(submit_a, close_a);
+        match (s_res, c_res) {
+            (Ok(_), Err(c_err)) => {
+                assert_eq!(contract_code(&c_err), "ACTIVE_RESOURCES");
+            }
+            (Err(s_err), Ok(_)) => {
+                assert_eq!(contract_code(&s_err), "SESSION_CLOSED");
+            }
+            other => panic!("must be mutually exclusive, got {other:?}"),
+        }
+
+        // Case B: idempotent replay of an accepted run.submit after session.close
+        // and session.delete must return the original run receipt rather than
+        // SESSION_CLOSED or NOT_FOUND.
+        let (_pid, sid_b, rev_b) = seeded(&rt, &iid, "raceb").await;
+        let (_, accepted) = rt
+            .dispatch(
+                "run.submit",
+                json!({
+                    "instanceId": iid,
+                    "sessionId": sid_b,
+                    "input": [{"kind": "text", "text": "quick"}],
+                }),
+                Some("replay-key-b"),
+                None,
+            )
+            .await
+            .unwrap();
+        let run_id = accepted["runId"].as_str().unwrap().to_owned();
+        rt.dispatch(
+            "run.wait",
+            json!({"instanceId": iid, "runId": run_id, "timeoutMs": 5000}),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let (_, closed) = rt
+            .dispatch(
+                "session.close",
+                json!({"instanceId": iid, "sessionId": sid_b, "expectedRevision": rev_b}),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let closed_rev = closed["session"]["revision"].as_str().unwrap().to_owned();
+
+        let (_, replay_after_close) = rt
+            .dispatch(
+                "run.submit",
+                json!({
+                    "instanceId": iid,
+                    "sessionId": sid_b,
+                    "input": [{"kind": "text", "text": "quick"}],
+                }),
+                Some("replay-key-b"),
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(replay_after_close["runId"], run_id);
+
+        rt.dispatch(
+            "session.delete",
+            json!({"instanceId": iid, "sessionId": sid_b, "expectedRevision": closed_rev}),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let (_, replay_after_delete) = rt
+            .dispatch(
+                "run.submit",
+                json!({
+                    "instanceId": iid,
+                    "sessionId": sid_b,
+                    "input": [{"kind": "text", "text": "quick"}],
+                }),
+                Some("replay-key-b"),
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(replay_after_delete["runId"], run_id);
+    }
+
+    #[tokio::test]
+    async fn close_and_delete_block_on_active_ops_and_reopen_checks_project() {
+        let tmp = TempDir::new("sess-res-16");
+        let root_dir = tmp.0.join("pd-home");
+        initialize_instance(&root_dir, None, Some("local"), Some(true)).unwrap();
+        let (rt, iid) = open_runtime(&root_dir);
+        let (pid, sid, rev) = seeded(&rt, &iid, "res16").await;
+
+        {
+            let conn = rt.store().conn.lock().expect("sqlite mutex");
+            conn.execute(
+                "INSERT INTO operations (operation_id, operation_type, scope_kind, project_id, session_id, state, revision, terminal, created_at, updated_at)
+                 VALUES ('op-sess-1', 'search.start', 'session', ?1, ?2, 'running', 'rev-op', 0, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+                rusqlite::params![pid, sid],
+            )
+            .unwrap();
+        }
+        let err = rt
+            .dispatch(
+                "session.close",
+                json!({"instanceId": iid, "sessionId": sid, "expectedRevision": rev}),
+                None,
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(contract_code(&err), "ACTIVE_RESOURCES");
+        let err = rt
+            .dispatch(
+                "session.delete",
+                json!({"instanceId": iid, "sessionId": sid, "expectedRevision": rev}),
+                None,
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(contract_code(&err), "ACTIVE_RESOURCES");
+
+        {
+            let conn = rt.store().conn.lock().expect("sqlite mutex");
+            conn.execute(
+                "UPDATE operations SET state = 'succeeded', terminal = 1 WHERE operation_id = 'op-sess-1'",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO v1_schedules (schedule_id, task_id, project_id, session_id, kind, expression, timezone, enabled, message, channel_id, revision, created_at, updated_at)
+                 VALUES ('sched-sess-1', 'task-s', ?1, ?2, 'cron', '* * * * *', 'UTC', 1, 'hi', NULL, 'srev-1', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+                rusqlite::params![pid, sid],
+            )
+            .unwrap();
+        }
+        let err = rt
+            .dispatch(
+                "session.close",
+                json!({"instanceId": iid, "sessionId": sid, "expectedRevision": rev}),
+                None,
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(contract_code(&err), "ACTIVE_RESOURCES");
+
+        {
+            let conn = rt.store().conn.lock().expect("sqlite mutex");
+            conn.execute(
+                "UPDATE v1_schedules SET enabled = 0 WHERE schedule_id = 'sched-sess-1'",
+                [],
+            )
+            .unwrap();
+        }
+        let (_, closed) = rt
+            .dispatch(
+                "session.close",
+                json!({"instanceId": iid, "sessionId": sid, "expectedRevision": rev}),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let closed_rev = closed["session"]["revision"].as_str().unwrap().to_owned();
+
+        // Removing the parent project prevents session.reopen.
+        {
+            let conn = rt.store().conn.lock().expect("sqlite mutex");
+            conn.execute(
+                "DELETE FROM projects WHERE project_id = ?1",
+                rusqlite::params![pid],
+            )
+            .unwrap();
+        }
+        let err = rt
+            .dispatch(
+                "session.reopen",
+                json!({"instanceId": iid, "sessionId": sid, "expectedRevision": closed_rev}),
+                None,
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(contract_code(&err), "NOT_FOUND");
     }
 }

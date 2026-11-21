@@ -848,3 +848,354 @@ async fn history_export_restore_roundtrip() {
     );
     assert_eq!(expect_fail("archive.get", &ghost), "NOT_FOUND");
 }
+
+// ===========================================================================
+// T06 regression coverage: #2 symlink containment, #10 session close/delete
+// replay invariance, #16 project.remove closing sessions
+// ===========================================================================
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn project_create_blocks_symlink_escape_before_probing() {
+    let home = TestHome::new("t012-symlink");
+    let root = home.path();
+    init_home(root);
+    let instance_id = init_home_instance(root);
+
+    let parent_created = await_cli(
+        root,
+        &[
+            "directories",
+            "create",
+            "--output",
+            "json",
+            "--request-key",
+            "t012-sym-dir-1",
+            "--path",
+            &server_path("default", "symparent"),
+        ],
+    );
+    expect_ok("directories.create", &parent_created);
+
+    let outside = TestHome::new("t012-sym-outside");
+    std::fs::write(outside.path().join("sentinel.txt"), "keep").unwrap();
+
+    let parent_dir = root.join("workspaces").join("symparent");
+    assert!(parent_dir.is_dir());
+    std::os::unix::fs::symlink(outside.path(), parent_dir.join("escape-dir")).unwrap();
+
+    // Symlink intermediate parent pointing outside root fails PATH_NOT_ALLOWED
+    // without touching or probing the external target.
+    let escape_parent = serde_json::to_string(&json!({
+        "instanceId": instance_id,
+        "rootId": "default",
+        "relativePath": "symparent/escape-dir",
+    }))
+    .unwrap();
+    let res = await_cli(
+        root,
+        &[
+            "projects",
+            "create",
+            "--output",
+            "json",
+            "--project-id",
+            "p-sym-parent",
+            "--parent",
+            &escape_parent,
+            "--directory-name",
+            "child",
+            "--name",
+            "SymParent",
+        ],
+    );
+    assert_eq!(expect_fail("project.create", &res), "PATH_NOT_ALLOWED");
+    assert!(!outside.path().join("child").exists());
+
+    // Symlink directly at the target leaf escaping outside root also fails PATH_NOT_ALLOWED.
+    std::os::unix::fs::symlink(outside.path(), parent_dir.join("escape-leaf")).unwrap();
+    let direct_parent = serde_json::to_string(&json!({
+        "instanceId": instance_id,
+        "rootId": "default",
+        "relativePath": "symparent",
+    }))
+    .unwrap();
+    let leaf_res = await_cli(
+        root,
+        &[
+            "projects",
+            "create",
+            "--output",
+            "json",
+            "--project-id",
+            "p-sym-leaf",
+            "--parent",
+            &direct_parent,
+            "--directory-name",
+            "escape-leaf",
+            "--name",
+            "SymLeaf",
+        ],
+    );
+    assert_eq!(expect_fail("project.create", &leaf_res), "PATH_NOT_ALLOWED");
+    assert_eq!(
+        std::fs::read_to_string(outside.path().join("sentinel.txt")).unwrap(),
+        "keep"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn project_remove_closes_sessions_and_blocks_reopen_or_submit() {
+    let home = TestHome::new("t012-proj-rm");
+    let root = home.path();
+    init_home(root);
+    let instance_id = init_home_instance(root);
+
+    let dir_out = await_cli(
+        root,
+        &[
+            "directories",
+            "create",
+            "--output",
+            "json",
+            "--request-key",
+            "t012-prm-dir",
+            "--path",
+            &server_path("default", "rmteam"),
+        ],
+    );
+    expect_ok("directories.create", &dir_out);
+
+    let parent_json = serde_json::to_string(&json!({
+        "instanceId": instance_id,
+        "rootId": "default",
+        "relativePath": "rmteam",
+    }))
+    .unwrap();
+    let created = await_cli(
+        root,
+        &[
+            "projects",
+            "create",
+            "--output",
+            "json",
+            "--project-id",
+            "p-rm-close",
+            "--parent",
+            &parent_json,
+            "--directory-name",
+            "alpha",
+            "--name",
+            "RemoveClose",
+        ],
+    );
+    let created = expect_ok("project.create", &created);
+    let proj_rev = created["project"]["revision"].as_str().unwrap().to_owned();
+
+    let sess_out = await_cli(
+        root,
+        &[
+            "sessions",
+            "create",
+            "--output",
+            "json",
+            "--session-id",
+            "s-rm-close",
+            "--project-id",
+            "p-rm-close",
+        ],
+    );
+    expect_ok("session.create", &sess_out);
+
+    let run = submit_run(root, "s-rm-close", "before remove", "t012-prm-run1").await;
+    let run_id = run["runId"].as_str().unwrap().to_owned();
+    let waited = wait_run(root, &run_id);
+    let waited = expect_envelope("run.wait", &waited);
+    assert_eq!(waited["run"]["state"], "succeeded");
+
+    let removed = await_cli(
+        root,
+        &[
+            "projects",
+            "remove",
+            "--output",
+            "json",
+            "--project-id",
+            "p-rm-close",
+            "--expected-revision",
+            &proj_rev,
+        ],
+    );
+    let removed = expect_ok("project.remove", &removed);
+    assert_eq!(removed["removedProjectId"], "p-rm-close");
+
+    let sess_after = await_cli(
+        root,
+        &[
+            "sessions",
+            "get",
+            "--output",
+            "json",
+            "--session-id",
+            "s-rm-close",
+        ],
+    );
+    let sess_after = expect_ok("session.get", &sess_after);
+    assert_eq!(sess_after["session"]["sessionState"], "closed");
+    let closed_rev = sess_after["session"]["revision"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let refused = await_cli(
+        root,
+        &[
+            "run",
+            "submit",
+            "--output",
+            "json",
+            "--request-key",
+            "t012-prm-run2",
+            "--session-id",
+            "s-rm-close",
+            "--text",
+            "after project remove",
+        ],
+    );
+    assert_eq!(expect_fail("run.submit", &refused), "SESSION_CLOSED");
+
+    let reopen_refused = await_cli(
+        root,
+        &[
+            "sessions",
+            "reopen",
+            "--output",
+            "json",
+            "--session-id",
+            "s-rm-close",
+            "--expected-revision",
+            &closed_rev,
+        ],
+    );
+    assert_eq!(expect_fail("session.reopen", &reopen_refused), "NOT_FOUND");
+
+    let hist = await_cli(
+        root,
+        &[
+            "history",
+            "read",
+            "--output",
+            "json",
+            "--session-id",
+            "s-rm-close",
+        ],
+    );
+    expect_ok("history.read", &hist);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn session_close_and_delete_preserve_idempotent_run_replay() {
+    let home = TestHome::new("t012-close-idem");
+    let root = home.path();
+    init_home(root);
+    let (_, session_id) = seed_project_session(root, "t012ci").await;
+
+    let first = submit_run(root, &session_id, "repeatable", "t012-ci-k1").await;
+    let first_run_id = first["runId"].as_str().unwrap().to_owned();
+    let waited = wait_run(root, &first_run_id);
+    let waited = expect_envelope("run.wait", &waited);
+    assert_eq!(waited["run"]["state"], "succeeded");
+
+    let rev_open = session_revision(root, &session_id).await;
+    let closed = await_cli(
+        root,
+        &[
+            "sessions",
+            "close",
+            "--output",
+            "json",
+            "--session-id",
+            &session_id,
+            "--expected-revision",
+            &rev_open,
+        ],
+    );
+    let closed = expect_ok("session.close", &closed);
+    let rev_closed = closed["session"]["revision"].as_str().unwrap().to_owned();
+
+    // Fresh submit fails SESSION_CLOSED, while idempotent replay succeeds with same runId.
+    let fresh_after_close = await_cli(
+        root,
+        &[
+            "run",
+            "submit",
+            "--output",
+            "json",
+            "--request-key",
+            "t012-ci-k2",
+            "--session-id",
+            &session_id,
+            "--text",
+            "blocked",
+        ],
+    );
+    assert_eq!(
+        expect_fail("run.submit", &fresh_after_close),
+        "SESSION_CLOSED"
+    );
+
+    let replay_after_close = submit_run(root, &session_id, "repeatable", "t012-ci-k1").await;
+    assert_eq!(replay_after_close["runId"], first_run_id);
+
+    // Reopen then delete; fresh submit fails NOT_FOUND, idempotent replay still returns first_run_id.
+    let reopened = await_cli(
+        root,
+        &[
+            "sessions",
+            "reopen",
+            "--output",
+            "json",
+            "--session-id",
+            &session_id,
+            "--expected-revision",
+            &rev_closed,
+        ],
+    );
+    let reopened = expect_ok("session.reopen", &reopened);
+    let rev_reopened = reopened["session"]["revision"].as_str().unwrap().to_owned();
+
+    let deleted = await_cli(
+        root,
+        &[
+            "sessions",
+            "delete",
+            "--output",
+            "json",
+            "--session-id",
+            &session_id,
+            "--expected-revision",
+            &rev_reopened,
+        ],
+    );
+    expect_ok("session.delete", &deleted);
+
+    let fresh_after_delete = await_cli(
+        root,
+        &[
+            "run",
+            "submit",
+            "--output",
+            "json",
+            "--request-key",
+            "t012-ci-k3",
+            "--session-id",
+            &session_id,
+            "--text",
+            "blocked-deleted",
+        ],
+    );
+    assert_eq!(expect_fail("run.submit", &fresh_after_delete), "NOT_FOUND");
+
+    let replay_after_delete = submit_run(root, &session_id, "repeatable", "t012-ci-k1").await;
+    assert_eq!(replay_after_delete["runId"], first_run_id);
+}

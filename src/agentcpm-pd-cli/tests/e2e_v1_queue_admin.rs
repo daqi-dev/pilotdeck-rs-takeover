@@ -894,3 +894,128 @@ async fn input_follow_pacing_sigint() {
     assert_eq!(end["type"], "end");
     assert_eq!(cli2.wait_exit().await, 0);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn promote_refuses_self_and_queued_targets_and_continue_bumps_queue_revision() {
+    let home = TestHome::new("t010-p0-self-qrev");
+    let root = home.path();
+    init_home(root);
+    let (_, session_id) = seed_project_session(root, "t010p0").await;
+
+    let head = submit_run(root, &session_id, "[pd-driver:sleep=60000]", "t010-p0-h").await["runId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    wait_running(root, &head).await;
+    let q1 = submit_run(root, &session_id, "queued-1", "t010-p0-q1").await["runId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let q_before = queue_of(root, &session_id).await;
+    let qrev = q_before["revision"].as_str().unwrap().to_owned();
+
+    // Self-promote on a queued item (`queuedRunId == activeRunId == q1`) must fail
+    // with INVALID_ARGUMENT and leave the queue completely untouched.
+    let self_promo = queue_cmd(
+        root,
+        "promote-to-steer",
+        &[
+            "--session-id",
+            &session_id,
+            "--queued-run-id",
+            &q1,
+            "--active-run-id",
+            &q1,
+            "--expected-revision",
+            &qrev,
+            "--steer-id",
+            "st-self-e2e",
+        ],
+    );
+    assert_eq!(
+        expect_fail("queue.promote_to_steer", &self_promo),
+        "INVALID_ARGUMENT"
+    );
+    let q_after = queue_of(root, &session_id).await;
+    assert_eq!(q_after["revision"], qrev);
+    assert_eq!(queue_item_ids(&q_after), vec![head.clone(), q1.clone()]);
+
+    // Kill gateway so `head` becomes `interrupted` and queue pauses cleanly, then
+    // resume queue (wait for `q1` to finish) and verify `run.continue` advances
+    // `queue_revision` so stale `queue.pause` conflicts.
+    let pid = home.gateway_pid().expect("gateway pid");
+    signal_pid(pid, rustix::process::Signal::KILL);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    let q_paused = queue_of(root, &session_id).await;
+    let q_paused_rev = q_paused["revision"].as_str().unwrap().to_owned();
+    let reason = q_paused["pauseReason"]
+        .as_str()
+        .unwrap_or("gateway_restart")
+        .to_owned();
+    let resumed = queue_cmd(
+        root,
+        "resume",
+        &[
+            "--session-id",
+            &session_id,
+            "--expected-revision",
+            &q_paused_rev,
+            "--acknowledged-pause-reason",
+            &reason,
+        ],
+    );
+    expect_ok("queue.resume", &resumed);
+    let q1_done = expect_ok("run.wait", &wait_run(root, &q1));
+    assert_eq!(q1_done["run"]["state"], "succeeded");
+
+    let q_idle = queue_of(root, &session_id).await;
+    let stale_qrev = q_idle["revision"].as_str().unwrap().to_owned();
+    let head_got = expect_ok(
+        "run.get",
+        &await_cli(root, &["run", "get", "--output", "json", "--run-id", &head]),
+    )["run"]
+        .clone();
+    let head_rev = head_got["revision"].as_str().unwrap().to_owned();
+
+    let cont = await_cli(
+        root,
+        &[
+            "run",
+            "continue",
+            "--output",
+            "json",
+            "--source-run-id",
+            &head,
+            "--expected-revision",
+            &head_rev,
+            "--request-key",
+            "t010-p0-cont",
+            "--text",
+            "resume",
+        ],
+    );
+    let cont_ok = expect_ok("run.continue", &cont);
+    let cont_run_id = cont_ok["runId"].as_str().unwrap().to_owned();
+
+    // `run.continue` bumped `queue_revision`, so stale `queue.pause` must fail CAS.
+    let stale_pause = queue_cmd(
+        root,
+        "pause",
+        &[
+            "--session-id",
+            &session_id,
+            "--expected-revision",
+            &stale_qrev,
+            "--reason",
+            "stale",
+        ],
+    );
+    assert_eq!(
+        expect_fail("queue.pause", &stale_pause),
+        "REVISION_CONFLICT"
+    );
+
+    let _ = expect_ok("run.wait", &wait_run(root, &cont_run_id));
+}

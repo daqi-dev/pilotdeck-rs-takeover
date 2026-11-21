@@ -274,6 +274,10 @@ impl PublicV1Runtime {
         &self.store
     }
 
+    pub(crate) fn supports_steer(&self) -> bool {
+        self.submitter.is_some() || crate::public_v1::run_driver::offline_directives_enabled()
+    }
+
     pub(crate) fn terminal_registry(
         &self,
     ) -> &crate::public_v1::domains::terminals_pty::TerminalRegistry {
@@ -552,6 +556,8 @@ impl PublicV1Runtime {
         // borrow before the cancellation path calls `cancel_and_drain`.
         let stop = {
             let rt = self.clone();
+            let steer_notifier = rt.store.state_notifier();
+            let (steer_started_tx, mut steer_started_rx) = watch::channel(false);
             let mut drive = Box::pin(async {
                 let mut started = false;
                 loop {
@@ -567,6 +573,7 @@ impl PublicV1Runtime {
                                         &json!({"runId": run_id, "sessionId": run.session_id}),
                                     ),
                                 );
+                                let _ = steer_started_tx.send(true);
                             } else if rt.project_turn_event(&run, &event) {
                                 return DriveStop::Terminal;
                             }
@@ -574,6 +581,27 @@ impl PublicV1Runtime {
                         Ok(None) => return DriveStop::Eof,
                         Err(error) => return DriveStop::Error(error),
                     }
+                }
+            });
+            let mut steer_forwarder = Box::pin(async {
+                while !*steer_started_rx.borrow() {
+                    if steer_started_rx.changed().await.is_err() {
+                        return std::future::pending::<()>().await;
+                    }
+                }
+                loop {
+                    let wake = steer_notifier.notified();
+                    tokio::pin!(wake);
+                    wake.as_mut().enable();
+                    let _ =
+                        crate::public_v1::domains::steer::forward_pending_steers_for_owned_turn(
+                            &rt.store,
+                            &submitter.owner,
+                            &run.session_id,
+                            &run_id,
+                        )
+                        .await;
+                    wake.await;
                 }
             });
             let mut cancel_fired = Box::pin(async {
@@ -592,6 +620,7 @@ impl PublicV1Runtime {
             tokio::select! {
                 stop = &mut drive => stop,
                 () = &mut cancel_fired => DriveStop::Cancelled,
+                () = &mut steer_forwarder => unreachable!("steer_forwarder runs until turn ends"),
             }
         };
         match stop {
@@ -771,6 +800,22 @@ impl PublicV1Runtime {
                     "methodId": op.id,
                     "available": false,
                     "reason": "IMPLEMENTATION_UNAVAILABLE",
+                    "schemaVersion": OPERATION_VERSION,
+                    "limits": limits_pair,
+                    "supported": true,
+                    "configured": false,
+                    "authorized": Value::Null,
+                    "requiredPermission": [],
+                }));
+                continue;
+            }
+            if (op.id == "steer.submit" || op.id == "queue.promote_to_steer")
+                && !self.supports_steer()
+            {
+                caps.push(json!({
+                    "methodId": op.id,
+                    "available": false,
+                    "reason": "DEPENDENCY_UNAVAILABLE",
                     "schemaVersion": OPERATION_VERSION,
                     "limits": limits_pair,
                     "supported": true,

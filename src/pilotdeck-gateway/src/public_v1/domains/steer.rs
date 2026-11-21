@@ -77,19 +77,17 @@ use std::sync::Arc;
 use agentcpm_pd_protocol::contract::{ResponseOutcome, RunState};
 use agentcpm_pd_protocol::envelope::compute_input_digest;
 use agentcpm_pd_protocol::errors::{
-    CODE_IDEMPOTENCY_CONFLICT, CODE_NOT_FOUND, CODE_QUEUE_PAUSED, CODE_REVISION_CONFLICT,
-    ContractError, EffectStatus, RetrySpec,
+    CODE_CAPABILITY_UNAVAILABLE, CODE_IDEMPOTENCY_CONFLICT, CODE_NOT_FOUND, CODE_QUEUE_PAUSED,
+    CODE_REVISION_CONFLICT, CODE_UNAVAILABLE, ContractError, EffectStatus, RetrySpec,
 };
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde_json::{Value, json};
 
 use crate::public_v1::domains::DomainRegistry;
 use crate::public_v1::domains::session_admin::CODE_SESSION_CLOSED;
 use crate::public_v1::domains::workspace_dirs::{bump_rev_in_tx, domain_not_found, sql_err};
 use crate::public_v1::runtime::{DispatchError, PublicV1Runtime};
-use crate::public_v1::store::{
-    V1Store, now_rfc3339, parse_run_state, pinned_run_is_live, run_state_str,
-};
+use crate::public_v1::store::{V1Store, now_rfc3339, parse_run_state, run_state_str};
 
 /// 合同声明而协议 crate 尚无常量的错误码。
 pub(crate) const CODE_RUN_TERMINAL: &str = "RUN_TERMINAL";
@@ -136,29 +134,43 @@ pub(super) fn register(reg: &mut DomainRegistry) {
     });
 }
 
+async fn run_blocking<T, F>(task: F) -> Result<T, ContractError>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, ContractError> + Send + 'static,
+{
+    tokio::task::spawn_blocking(task).await.map_err(|err| {
+        ContractError::new(
+            CODE_UNAVAILABLE,
+            format!("steer worker failed: {err}"),
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        )
+    })?
+}
+
 async fn steer_submit(
     rt: Arc<PublicV1Runtime>,
     input: Value,
     idempotency_key: Option<String>,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
-    Ok((
-        ResponseOutcome::Succeeded,
+    let supports_steer = rt.supports_steer();
+    let result = run_blocking(move || {
         rt.store()
-            .submit_steer(&input, idempotency_key.as_deref())?,
-    ))
+            .submit_steer_with_capability(&input, idempotency_key.as_deref(), supports_steer)
+    })
+    .await?;
+    Ok((ResponseOutcome::Succeeded, result))
 }
 
 async fn steer_get(
     rt: Arc<PublicV1Runtime>,
     input: Value,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
-    Ok((
-        ResponseOutcome::Succeeded,
-        rt.store().get_steer_status(
-            input["runId"].as_str().unwrap_or_default(),
-            input["steerId"].as_str().unwrap_or_default(),
-        )?,
-    ))
+    let run_id = input["runId"].as_str().unwrap_or_default().to_owned();
+    let steer_id = input["steerId"].as_str().unwrap_or_default().to_owned();
+    let result = run_blocking(move || rt.store().get_steer_status(&run_id, &steer_id)).await?;
+    Ok((ResponseOutcome::Succeeded, result))
 }
 
 async fn steer_withdraw(
@@ -171,15 +183,12 @@ async fn steer_withdraw(
     let rev = expected_revision
         .as_deref()
         .or_else(|| input.get("expectedRevision").and_then(Value::as_str))
-        .unwrap_or_default();
-    Ok((
-        ResponseOutcome::Succeeded,
-        rt.store().withdraw_steer(
-            input["runId"].as_str().unwrap_or_default(),
-            input["steerId"].as_str().unwrap_or_default(),
-            rev,
-        )?,
-    ))
+        .unwrap_or_default()
+        .to_owned();
+    let run_id = input["runId"].as_str().unwrap_or_default().to_owned();
+    let steer_id = input["steerId"].as_str().unwrap_or_default().to_owned();
+    let result = run_blocking(move || rt.store().withdraw_steer(&run_id, &steer_id, &rev)).await?;
+    Ok((ResponseOutcome::Succeeded, result))
 }
 
 async fn run_continue(
@@ -190,10 +199,15 @@ async fn run_continue(
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
     let effective = expected_revision
         .as_deref()
-        .or_else(|| input.get("expectedRevision").and_then(Value::as_str));
-    let outcome = rt
-        .store()
-        .continue_run(&input, idempotency_key.as_deref(), effective)?;
+        .or_else(|| input.get("expectedRevision").and_then(Value::as_str))
+        .map(ToOwned::to_owned);
+    let rt_store = rt.clone();
+    let outcome = run_blocking(move || {
+        rt_store
+            .store()
+            .continue_run(&input, idempotency_key.as_deref(), effective.as_deref())
+    })
+    .await?;
     if outcome.start_worker {
         rt.start_session_worker(outcome.run_id.clone());
     }
@@ -327,13 +341,36 @@ fn append_run_event_in_tx(
 }
 
 impl V1Store {
-    /// `steer.submit`：一个事务内完成幂等闸、run 存在性/终态闸、steerId
-    /// 防重与新引导落库 + 幂等记录。
+    /// `steer.submit`：一个事务内完成能力闸、幂等闸、run 存在性/终态闸、
+    /// `steerId` 防重与新引导落库 + 幂等记录。
+    #[allow(dead_code)]
     pub(crate) fn submit_steer(
         &self,
         input: &Value,
         idempotency_key: Option<&str>,
     ) -> Result<Value, ContractError> {
+        self.submit_steer_with_capability(
+            input,
+            idempotency_key,
+            crate::public_v1::run_driver::offline_directives_enabled(),
+        )
+    }
+
+    pub(crate) fn submit_steer_with_capability(
+        &self,
+        input: &Value,
+        idempotency_key: Option<&str>,
+        supports_steer: bool,
+    ) -> Result<Value, ContractError> {
+        if !supports_steer {
+            return Err(ContractError::new(
+                CODE_CAPABILITY_UNAVAILABLE,
+                "active run driver does not support mid-run steer injection",
+                RetrySpec::never(),
+                EffectStatus::NotApplied,
+            ));
+        }
+
         let run_id = input["runId"].as_str().unwrap_or_default();
         let steer_id = input["steerId"].as_str().unwrap_or_default();
         let digest = compute_input_digest("steer.submit", input);
@@ -341,7 +378,9 @@ impl V1Store {
         let retained_until = (chrono::Utc::now() + chrono::Duration::days(7)).to_rfc3339();
 
         let mut conn = self.conn.lock().expect("sqlite mutex");
-        let tx = conn.transaction().map_err(sql_err)?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sql_err)?;
 
         // 1. 幂等闸（先于一切资源查找，run.submit 同序）。
         if let Some(key) = idempotency_key {
@@ -354,7 +393,7 @@ impl V1Store {
                 )
                 .optional()
                 .map_err(sql_err)?;
-            if let Some((stored_digest, req_state, _receipt_json, rej_code)) = existing {
+            if let Some((stored_digest, req_state, receipt_json, rej_code)) = existing {
                 if stored_digest != digest {
                     return Err(ContractError::new(
                         CODE_IDEMPOTENCY_CONFLICT,
@@ -373,8 +412,31 @@ impl V1Store {
                         EffectStatus::NotApplied,
                     ));
                 }
-                // accepted + 同 digest：同 (runId, steerId)——落到下方 steerId
-                // 防重路径，返回当前引导状态（受理≠已消费，重试可见推进）。
+                // accepted + 同 key 重放：若已进入 consumed 则投影真实 consumed 状态；
+                // 若未消费或已撤回/终态拒绝，重放原接受回执以恪守 steer.submit schema
+                // （schema 仅允许 pending/consumed）。
+                if let Some((_, _, phase, state, revision)) = load_steer(&tx, run_id, steer_id)?
+                    && phase == PHASE_CONSUMED
+                {
+                    let state_str: Option<String> = tx
+                        .query_row(
+                            "SELECT state FROM runs WHERE run_id = ?1",
+                            params![run_id],
+                            |r| r.get(0),
+                        )
+                        .optional()
+                        .map_err(sql_err)?;
+                    let run_state = parse_run_state(state_str.as_deref().unwrap_or("running"));
+                    let (phase_eff, state_eff) = effective_status(&phase, &state, run_state);
+                    return Ok(steer_status_json(
+                        steer_id, phase_eff, &state_eff, &revision,
+                    ));
+                }
+                if let Some(raw_receipt) = receipt_json
+                    && let Ok(parsed) = serde_json::from_str::<Value>(&raw_receipt)
+                {
+                    return Ok(parsed);
+                }
             }
         }
 
@@ -403,7 +465,11 @@ impl V1Store {
             return Err(domain_not_found("run", run_id));
         };
 
-        // 3. steerId 防重（先于终态闸：已受理引导的重提交必须幂等）。
+        // 3. steerId 防重（允许同一 `(runId, steerId)` 携带新幂等键重入）：
+        //    - consumed → 返回 consumed（并回填 idempotency_records）；
+        //    - withdrawn → IDEMPOTENCY_CONFLICT（已撤回不可恢复）；
+        //    - pending + live → 返回 pending（并回填 idempotency_records）；
+        //    - pending + terminal/cancelling → RUN_TERMINAL（严守 schema）。
         if let Some((_stored_json, stored_digest, phase, state, revision)) =
             load_steer(&tx, run_id, steer_id)?
         {
@@ -418,15 +484,81 @@ impl V1Store {
                 ));
             }
             let run_state = parse_run_state(&state_str);
-            let (phase_eff, state_eff) = effective_status(&phase, &state, run_state);
-            return Ok(steer_status_json(
-                steer_id, phase_eff, &state_eff, &revision,
-            ));
+            let status = match phase.as_str() {
+                PHASE_CONSUMED => {
+                    let (phase_eff, state_eff) = effective_status(&phase, &state, run_state);
+                    steer_status_json(steer_id, phase_eff, &state_eff, &revision)
+                }
+                PHASE_WITHDRAWN => {
+                    if let Some(key) = idempotency_key {
+                        record_rejection(
+                            &tx,
+                            "steer.submit",
+                            key,
+                            &digest,
+                            CODE_IDEMPOTENCY_CONFLICT,
+                            &now,
+                            &retained_until,
+                        )?;
+                        tx.commit().map_err(sql_err)?;
+                    }
+                    return Err(ContractError::new(
+                        CODE_IDEMPOTENCY_CONFLICT,
+                        format!(
+                            "steerId `{steer_id}` on run `{run_id}` was withdrawn; pick a new steerId"
+                        ),
+                        RetrySpec::never(),
+                        EffectStatus::NotApplied,
+                    ));
+                }
+                _ => {
+                    if terminal != 0 || state_str == "cancelling" {
+                        if let Some(key) = idempotency_key {
+                            record_rejection(
+                                &tx,
+                                "steer.submit",
+                                key,
+                                &digest,
+                                CODE_RUN_TERMINAL,
+                                &now,
+                                &retained_until,
+                            )?;
+                            tx.commit().map_err(sql_err)?;
+                        }
+                        return Err(ContractError::new(
+                            CODE_RUN_TERMINAL,
+                            format!(
+                                "run `{run_id}` is terminal or cancelling ({state_str}); unconsumed steer `{steer_id}` can no longer be submitted"
+                            ),
+                            RetrySpec::never(),
+                            EffectStatus::NotApplied,
+                        ));
+                    }
+                    steer_status_json(steer_id, PHASE_PENDING, "queued", &revision)
+                }
+            };
+            if let Some(key) = idempotency_key {
+                let resource_val = json!({"kind": "steer", "runId": run_id, "steerId": steer_id});
+                tx.execute(
+                    "INSERT OR IGNORE INTO idempotency_records (idempotency_key, method_id, input_digest, request_state, reason, resource_json, receipt_json, rejection_code, observed_at, retained_until, retry_disposition)
+                     VALUES (?1, 'steer.submit', ?2, 'accepted', 'receiptFound', ?3, ?4, NULL, ?5, ?6, 'doNotReplay')",
+                    params![
+                        key,
+                        digest,
+                        serde_json::to_string(&resource_val).unwrap(),
+                        serde_json::to_string(&status).unwrap(),
+                        now,
+                        retained_until
+                    ],
+                )
+                .map_err(sql_err)?;
+                tx.commit().map_err(sql_err)?;
+            }
+            return Ok(status);
         }
 
-        // 4. 终态闸（新提交）：run.cancel 的 cancelled/cancelling 与既有
-        //    succeeded/failed/interrupted/result_unknown 一律不再接受引导。
-        if terminal != 0 {
+        // 4. 终态/取消中闸（新提交）：cancelling 与一切终态均不再接受引导。
+        if terminal != 0 || state_str == "cancelling" {
             if let Some(key) = idempotency_key {
                 record_rejection(
                     &tx,
@@ -441,7 +573,9 @@ impl V1Store {
             }
             return Err(ContractError::new(
                 CODE_RUN_TERMINAL,
-                format!("run `{run_id}` is terminal ({state_str}); steers need a non-terminal run"),
+                format!(
+                    "run `{run_id}` is terminal or cancelling ({state_str}); steers need a live non-terminal run"
+                ),
                 RetrySpec::never(),
                 EffectStatus::NotApplied,
             ));
@@ -525,8 +659,9 @@ impl V1Store {
         ))
     }
 
-    /// `steer.withdraw`：对存储 `pending` 的引导做条件写撤销。
-    /// 消费与撤销经同一 sqlite 写事务串行化，仅一方成功。
+    /// `steer.withdraw`：对存储 `pending` 且 run 未终态的引导做条件写撤销。
+    /// 消费与撤销经同一 sqlite 写事务串行化，仅一方成功；run 已终态化时未消费
+    /// 的引导读面已是 `rejected`，不可再篡改为 `withdrawn`/`cancelled`。
     pub(crate) fn withdraw_steer(
         &self,
         run_id: &str,
@@ -535,13 +670,24 @@ impl V1Store {
     ) -> Result<Value, ContractError> {
         let now = now_rfc3339();
         let mut conn = self.conn.lock().expect("sqlite mutex");
-        let tx = conn.transaction().map_err(sql_err)?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sql_err)?;
 
         let Some((_input_json, _digest, phase, state, revision)) =
             load_steer(&tx, run_id, steer_id)?
         else {
             return Err(domain_not_found("steer", steer_id));
         };
+        let run_terminal: i64 = tx
+            .query_row(
+                "SELECT terminal FROM runs WHERE run_id = ?1",
+                params![run_id],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(sql_err)?
+            .unwrap_or(1);
 
         match phase.as_str() {
             // 「已消费不可伪装撤回」：终局事实优先于修订复验。
@@ -566,9 +712,19 @@ impl V1Store {
                 ))
             }
             _ => {
-                // pending：条件写撤销。
+                // pending：run 已终态化则该引导已转为 rejected，不再允许改写成 withdrawn。
                 if revision != expected_revision {
                     return Err(revision_conflict(expected_revision, &revision));
+                }
+                if run_terminal != 0 {
+                    return Err(ContractError::new(
+                        CODE_REVISION_CONFLICT,
+                        format!(
+                            "run `{run_id}` is already terminal; pending steer `{steer_id}` is already rejected and cannot be withdrawn"
+                        ),
+                        RetrySpec::after_reconcile(),
+                        EffectStatus::NotApplied,
+                    ));
                 }
                 let rev = bump_rev_in_tx(&tx)?;
                 tx.execute(
@@ -598,7 +754,9 @@ impl V1Store {
     ) -> Result<Option<ConsumedSteer>, ContractError> {
         let now = now_rfc3339();
         let mut conn = self.conn.lock().expect("sqlite mutex");
-        let tx = conn.transaction().map_err(sql_err)?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sql_err)?;
 
         let row: Option<(String, String)> = tx
             .query_row(
@@ -632,6 +790,55 @@ impl V1Store {
         Ok(Some(ConsumedSteer { steer_id, input }))
     }
 
+    /// 只读查看最早一条 `pending` 引导（用于 `TurnSubmitter` 投递成功后再标 consumed）。
+    pub(crate) fn peek_pending_steer(
+        &self,
+        run_id: &str,
+    ) -> Result<Option<ConsumedSteer>, ContractError> {
+        let conn = self.conn.lock().expect("sqlite mutex");
+        let row: Option<(String, String)> = conn
+            .query_row(
+                "SELECT steer_id, input_json FROM steers
+                 WHERE run_id = ?1 AND phase = 'pending'
+                 ORDER BY created_at ASC, rowid ASC LIMIT 1",
+                params![run_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()
+            .map_err(sql_err)?;
+        Ok(row.map(|(steer_id, input_json)| ConsumedSteer {
+            steer_id,
+            input: serde_json::from_str(&input_json).unwrap_or(Value::Null),
+        }))
+    }
+
+    /// CAS 把已成功递交到 turn mailbox 的引导标为 `consumed`。
+    pub(crate) fn mark_steer_consumed(
+        &self,
+        run_id: &str,
+        steer_id: &str,
+    ) -> Result<bool, ContractError> {
+        let now = now_rfc3339();
+        let mut conn = self.conn.lock().expect("sqlite mutex");
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sql_err)?;
+        let rev = bump_rev_in_tx(&tx)?;
+        let updated = tx
+            .execute(
+                "UPDATE steers SET phase = 'consumed', revision = ?1, updated_at = ?2
+                 WHERE run_id = ?3 AND steer_id = ?4 AND phase = 'pending'",
+                params![rev, now, run_id, steer_id],
+            )
+            .map_err(sql_err)?;
+        if updated == 0 {
+            return Ok(false);
+        }
+        tx.commit().map_err(sql_err)?;
+        self.state_notifier().notify_waiters();
+        Ok(true)
+    }
+
     /// `run.continue`：一个事务内完成幂等闸、源 run 状态/修订/未知效果
     /// 复验、会话准入与新 run 受理（复刻 `submit_run` 落库形状）。
     pub(crate) fn continue_run(
@@ -648,7 +855,9 @@ impl V1Store {
         let retained_until = (chrono::Utc::now() + chrono::Duration::days(7)).to_rfc3339();
 
         let mut conn = self.conn.lock().expect("sqlite mutex");
-        let tx = conn.transaction().map_err(sql_err)?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sql_err)?;
 
         // 1. 幂等闸（run.submit 同序）。
         if let Some(key) = idempotency_key {
@@ -806,6 +1015,28 @@ impl V1Store {
             }
             return Err(domain_not_found("session", &session_id));
         }
+        let project_exists: bool = tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM projects WHERE project_id = ?1)",
+                params![project_id],
+                |r| r.get(0),
+            )
+            .map_err(sql_err)?;
+        if !project_exists {
+            if let Some(key) = idempotency_key {
+                record_rejection(
+                    &tx,
+                    "run.continue",
+                    key,
+                    &digest,
+                    CODE_NOT_FOUND,
+                    &now,
+                    &retained_until,
+                )?;
+                tx.commit().map_err(sql_err)?;
+            }
+            return Err(domain_not_found("project", &project_id));
+        }
         if session_state == "closed" {
             return Err(ContractError::new(
                 CODE_SESSION_CLOSED,
@@ -837,9 +1068,22 @@ impl V1Store {
                 |r| r.get(0),
             )
             .map_err(sql_err)?;
-        // rb7 P1（t010 后续）：与 `submit_run` 同判——pin 指向终态（或缺失）
-        // run 时不算忙，否则 stale pin 让续接的新 run 永远排队。
-        let pin_is_live = pinned_run_is_live(&tx, active_run_id.as_deref()).map_err(sql_err)?;
+        // P1 #15: 只把真实运行中 (`running`/`waiting`/`cancelling`) 且非终态的
+        // pin 视作占用，queued 态残留 pin 不得拖延续接；同时入队必推进
+        // sessions.queue_revision 以保护 queue.* CAS。
+        let pin_is_live: bool = match active_run_id.as_deref() {
+            Some(pin_id) => tx
+                .query_row(
+                    "SELECT terminal = 0 AND state IN ('running', 'waiting', 'cancelling')
+                     FROM runs WHERE run_id = ?1",
+                    params![pin_id],
+                    |r| r.get::<_, i64>(0).map(|v| v != 0),
+                )
+                .optional()
+                .map_err(sql_err)?
+                .unwrap_or(false),
+            None => false,
+        };
         let start_immediately = !pin_is_live && queued_exists == 0;
         let run_input = json!({
             "instanceId": self.meta().instance_id,
@@ -890,10 +1134,17 @@ impl V1Store {
             params![session_id, max_pos + 1, run_id],
         )
         .map_err(sql_err)?;
+        let new_qrev = bump_rev_in_tx(&tx)?;
         if start_immediately {
             tx.execute(
-                "UPDATE sessions SET active_run_id = ?1 WHERE session_id = ?2",
-                params![run_id, session_id],
+                "UPDATE sessions SET active_run_id = ?1, queue_revision = ?2 WHERE session_id = ?3",
+                params![run_id, new_qrev, session_id],
+            )
+            .map_err(sql_err)?;
+        } else {
+            tx.execute(
+                "UPDATE sessions SET queue_revision = ?1 WHERE session_id = ?2",
+                params![new_qrev, session_id],
             )
             .map_err(sql_err)?;
         }
@@ -934,6 +1185,58 @@ impl V1Store {
             start_worker: start_immediately,
         })
     }
+}
+
+/// Forwards currently pending steers for `(session_id, run_id)` into the live
+/// `SessionOwner` turn mailbox, marking each steer `consumed` only once `enqueue`
+/// accepts it (`runtime.rs::drive_owned_turn` integration hook).
+pub(crate) async fn forward_pending_steers_for_owned_turn(
+    store: &V1Store,
+    owner: &crate::runtime::session::owner::SessionOwner,
+    session_id: &str,
+    run_id: &str,
+) -> usize {
+    let mut forwarded = 0usize;
+    let session_key = pilotdeck_protocol::JsString::from(session_id);
+    let run_key = pilotdeck_protocol::JsString::from(run_id);
+    while let Ok(Some(steer)) = store.peek_pending_steer(run_id) {
+        let Some(info) = owner.active_steer_info(&session_key, &run_key) else {
+            break;
+        };
+        let payload = json!({
+            "role": "user",
+            "content": steer.text(),
+            "metadata": {
+                "queueItemId": steer.steer_id,
+                "purpose": "mid_turn_steer",
+            },
+        })
+        .to_string();
+        let message = pilotdeck_protocol::parse_json(&payload).unwrap_or_else(|_| {
+            pilotdeck_protocol::JsValue::String(pilotdeck_protocol::JsString::from(
+                steer.text().as_str(),
+            ))
+        });
+        let msg = crate::runtime::steer::SteerMessage {
+            item_id: pilotdeck_protocol::JsString::from(steer.steer_id.as_str()),
+            message,
+            allowed_read_files: None,
+        };
+        match info.enqueue(msg).await {
+            Ok(res) if res.accepted => {
+                if store
+                    .mark_steer_consumed(run_id, &steer.steer_id)
+                    .unwrap_or(false)
+                {
+                    forwarded += 1;
+                } else {
+                    break;
+                }
+            }
+            _ => break,
+        }
+    }
+    forwarded
 }
 
 fn source_not_interrupted(run_id: &str, state: &str) -> ContractError {
@@ -1339,9 +1642,35 @@ mod tests {
             .unwrap_err();
         assert_eq!(contract_code(&err), "RUN_TERMINAL");
 
-        // 已受理引导的重提交在终态 run 上仍幂等（不误报 RUN_TERMINAL）：
-        // cancelled run 上 pending 引导计算为 rejected/cancelled。
-        let (_, after) = rt
+        // `st-conf-4` 也应已回填 idempotency_records。
+        let (_, lookup_backfill) = rt
+            .dispatch(
+                "requests.lookup",
+                json!({"instanceId": iid, "methodId": "steer.submit", "idempotencyKey": "st-conf-4"}),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(lookup_backfill["requestState"], "accepted");
+
+        // 同幂等键在终态后重放原受理回执（严守 steer.submit schema：phase 仅 pending/consumed），
+        // steer.get 读面反映真实的 rejected/cancelled，而新幂等键再提未消费引导拒为 RUN_TERMINAL。
+        let (_, same_key_after) = rt
+            .dispatch(
+                "steer.submit",
+                steer_input(&iid, &run_id, "st-a", "first"),
+                Some("st-conf-2"),
+                None,
+            )
+            .await
+            .unwrap();
+        OperationRegistry::global()
+            .validate_result("steer.submit", &same_key_after)
+            .expect("idempotent replay must satisfy steer.submit schema");
+        assert_eq!(same_key_after["phase"], "pending", "{same_key_after}");
+
+        let err = rt
             .dispatch(
                 "steer.submit",
                 steer_input(&iid, &run_id, "st-a", "first"),
@@ -1349,9 +1678,8 @@ mod tests {
                 None,
             )
             .await
-            .unwrap();
-        assert_eq!(after["phase"], "rejected", "{after}");
-        assert_eq!(after["state"], "cancelled", "{after}");
+            .unwrap_err();
+        assert_eq!(contract_code(&err), "RUN_TERMINAL");
     }
 
     /// 未消费引导在 run 终态化后计算为 rejected（读时、不落库）；
@@ -1915,5 +2243,282 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(contract_code(&err), "INVALID_ARGUMENT");
+    }
+
+    #[tokio::test]
+    async fn capability_unavailable_rejects_steer_with_zero_writes_and_peek_consume_works() {
+        let tmp = TempDir::new("st-cap");
+        let root_dir = tmp.0.join("pd-home");
+        initialize_instance(&root_dir, None, Some("local"), Some(true)).unwrap();
+        let (rt, iid) = open_runtime(&root_dir);
+        let sid = seeded(&rt, &iid, "stcap").await;
+
+        let run_id = submit_run(&rt, &iid, &sid, "[pd-driver:sleep=60000]", "stcap-run").await;
+        let err = rt
+            .store()
+            .submit_steer_with_capability(
+                &steer_input(&iid, &run_id, "st-no-cap", "ignored"),
+                Some("stcap-key-1"),
+                false,
+            )
+            .unwrap_err();
+        assert_eq!(err.code, CODE_CAPABILITY_UNAVAILABLE);
+
+        {
+            let conn = rt.store().conn.lock().expect("sqlite mutex");
+            let steers_cnt: i64 = conn
+                .query_row("SELECT COUNT(*) FROM steers", [], |r| r.get(0))
+                .unwrap();
+            let idem_cnt: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM idempotency_records WHERE idempotency_key = 'stcap-key-1'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(steers_cnt, 0);
+            assert_eq!(idem_cnt, 0);
+        }
+
+        // Verify peek + mark_steer_consumed primitives used by owned-turn forwarding.
+        rt.store()
+            .submit_steer_with_capability(
+                &steer_input(&iid, &run_id, "st-peek-1", "hello forward"),
+                Some("stcap-key-2"),
+                true,
+            )
+            .unwrap();
+        let peeked = rt
+            .store()
+            .peek_pending_steer(&run_id)
+            .unwrap()
+            .expect("pending steer");
+        assert_eq!(peeked.steer_id, "st-peek-1");
+        assert_eq!(peeked.text(), "hello forward");
+        assert!(
+            rt.store()
+                .mark_steer_consumed(&run_id, "st-peek-1")
+                .unwrap()
+        );
+        assert!(rt.store().peek_pending_steer(&run_id).unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn cancelling_gate_withdrawn_resubmit_and_terminal_withdraw_invariants() {
+        let tmp = TempDir::new("st-invar");
+        let root_dir = tmp.0.join("pd-home");
+        initialize_instance(&root_dir, None, Some("local"), Some(true)).unwrap();
+        let (rt, iid) = open_runtime(&root_dir);
+        let sid = seeded(&rt, &iid, "stinvar").await;
+
+        let run_id = submit_run(&rt, &iid, &sid, "[pd-driver:sleep=60000]", "stinvar-r").await;
+        // 1) Withdrawn steer submitted again under a NEW key refuses instead of
+        //    emitting schema-invalid `phase = withdrawn`.
+        let (_, submitted) = rt
+            .dispatch(
+                "steer.submit",
+                steer_input(&iid, &run_id, "st-wd", "will withdraw"),
+                Some("stinvar-s1"),
+                None,
+            )
+            .await
+            .unwrap();
+        let rev = submitted["revision"].as_str().unwrap().to_owned();
+        rt.dispatch(
+            "steer.withdraw",
+            json!({"instanceId": iid, "runId": run_id, "steerId": "st-wd", "expectedRevision": rev}),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let err = rt
+            .dispatch(
+                "steer.submit",
+                steer_input(&iid, &run_id, "st-wd", "will withdraw"),
+                Some("stinvar-s1-newkey"),
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(contract_code(&err), "IDEMPOTENCY_CONFLICT");
+
+        // Same original key replays schema-valid initial receipt.
+        let (_, replay_same) = rt
+            .dispatch(
+                "steer.submit",
+                steer_input(&iid, &run_id, "st-wd", "will withdraw"),
+                Some("stinvar-s1"),
+                None,
+            )
+            .await
+            .unwrap();
+        OperationRegistry::global()
+            .validate_result("steer.submit", &replay_same)
+            .expect("same-key replay must always satisfy steer.submit schema");
+
+        // 2) Submit a second pending steer before cancelling.
+        let (_, s2) = rt
+            .dispatch(
+                "steer.submit",
+                steer_input(&iid, &run_id, "st-late-wd", "stay rejected"),
+                Some("stinvar-s2"),
+                None,
+            )
+            .await
+            .unwrap();
+        let rev2 = s2["revision"].as_str().unwrap().to_owned();
+
+        // Simulate `cancelling` before terminal=1: fresh steer must fail with RUN_TERMINAL.
+        {
+            let conn = rt.store().conn.lock().expect("sqlite mutex");
+            conn.execute(
+                "UPDATE runs SET state = 'cancelling' WHERE run_id = ?1",
+                params![run_id],
+            )
+            .unwrap();
+        }
+        let err = rt
+            .dispatch(
+                "steer.submit",
+                steer_input(&iid, &run_id, "st-cancelling", "too late"),
+                Some("stinvar-s3"),
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(contract_code(&err), "RUN_TERMINAL");
+
+        // Now terminalize run (`terminal = 1`): withdraw of unconsumed pending steer
+        // must fail with REVISION_CONFLICT and NOT mutate phase to withdrawn.
+        rt.store()
+            .transition_run_state(
+                &run_id,
+                crate::public_v1::store::RunTransition::new(
+                    RunState::Cancelled,
+                    "run.cancelled",
+                    &json!({"runId": run_id, "state": "cancelled"}),
+                ),
+            )
+            .unwrap();
+        let err = rt
+            .dispatch(
+                "steer.withdraw",
+                json!({"instanceId": iid, "runId": run_id, "steerId": "st-late-wd", "expectedRevision": rev2}),
+                None,
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(contract_code(&err), "REVISION_CONFLICT");
+
+        let (_, still_rejected) = rt
+            .dispatch(
+                "steer.get",
+                json!({"instanceId": iid, "runId": run_id, "steerId": "st-late-wd"}),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(still_rejected["phase"], "rejected");
+    }
+
+    #[tokio::test]
+    async fn continue_run_bumps_queue_revision_ignores_queued_pin_and_checks_project() {
+        let tmp = TempDir::new("rc-hooks");
+        let root_dir = tmp.0.join("pd-home");
+        initialize_instance(&root_dir, None, Some("local"), Some(true)).unwrap();
+        let (rt, iid) = open_runtime(&root_dir);
+        let sid = seeded(&rt, &iid, "rch").await;
+
+        let source_id = submit_run(&rt, &iid, &sid, "[pd-driver:sleep=60000]", "rch-src").await;
+        for _ in 0..100 {
+            if run_state(&rt, &iid, &source_id).await == "running" {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        rt.store()
+            .transition_run_state(
+                &source_id,
+                crate::public_v1::store::RunTransition::new(
+                    RunState::Interrupted,
+                    "run.interrupted",
+                    &json!({"runId": source_id, "state": "interrupted", "reason": "gateway_restart"}),
+                ),
+            )
+            .unwrap();
+        let source_rev = rt.store().get_run(&source_id).unwrap().revision;
+
+        // Read queue revision before continue, then continue: queue_revision must advance.
+        let (_, q_before) = rt
+            .dispatch(
+                "queue.get",
+                json!({"instanceId": iid, "sessionId": sid}),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let qrev_before = q_before["revision"].as_str().unwrap().to_owned();
+
+        let (outcome, continued) = rt
+            .dispatch(
+                "run.continue",
+                json!({
+                    "instanceId": iid,
+                    "sourceRunId": source_id,
+                    "expectedRevision": source_rev,
+                    "input": [{"kind": "text", "text": "resume once"}]
+                }),
+                Some("rch-cont-1"),
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(outcome, ResponseOutcome::Accepted);
+        let new_id = continued["runId"].as_str().unwrap().to_owned();
+
+        let err = rt
+            .dispatch(
+                "queue.pause",
+                json!({
+                    "instanceId": iid,
+                    "sessionId": sid,
+                    "expectedRevision": qrev_before,
+                    "reason": "stale_rev"
+                }),
+                None,
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(contract_code(&err), "REVISION_CONFLICT");
+
+        let settled = wait_terminal(&rt, &iid, &new_id).await;
+        assert_eq!(settled["state"], "succeeded");
+
+        // Remove project (simulate removal after interruption): run.continue fails NOT_FOUND.
+        {
+            let conn = rt.store().conn.lock().expect("sqlite mutex");
+            conn.execute("DELETE FROM projects WHERE project_id = 'p-rch'", [])
+                .unwrap();
+        }
+        let err = rt
+            .dispatch(
+                "run.continue",
+                json!({
+                    "instanceId": iid,
+                    "sourceRunId": source_id,
+                    "expectedRevision": source_rev,
+                    "input": [{"kind": "text", "text": "after remove"}]
+                }),
+                Some("rch-cont-after-remove"),
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(contract_code(&err), "NOT_FOUND");
     }
 }

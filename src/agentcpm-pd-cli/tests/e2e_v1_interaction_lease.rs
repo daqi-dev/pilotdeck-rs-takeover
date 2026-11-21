@@ -136,13 +136,18 @@ async fn claim_release_and_competition_lifecycle() {
     let rev_after_claim = claim["revision"].as_str().unwrap().to_owned();
     assert_ne!(rev_after_claim, revision);
 
-    // The S2 read path reports the holder.
+    // The S2 read path reports an opaque non-secret owner tag instead of
+    // leaking the fencing `leaseId` credential.
     let got = interaction_get(home.path(), &interaction_id).await;
-    assert_eq!(got["leaseOwner"], "lease-a");
+    let owner_a = got["leaseOwner"]
+        .as_str()
+        .expect("leaseOwner present")
+        .to_owned();
+    assert!(owner_a.starts_with("lease-") && owner_a != "lease-a");
     assert_eq!(got["state"], "pending");
 
-    // A different competing owner is rejected (不同 owner 竞争拒绝), and the
-    // rejection leaves the lease untouched.
+    // A different competing owner is rejected (不同 owner 竞争拒绝), without
+    // exposing the active `leaseId` in the error and leaving the lease intact.
     let out = await_cli(
         home.path(),
         &[
@@ -158,6 +163,7 @@ async fn claim_release_and_competition_lifecycle() {
             "lease-b",
         ],
     );
+    assert!(!out.stdout.contains("lease-a"));
     assert_eq!(
         expect_failed("interaction.claim", &out),
         "LEASE_CONFLICT",
@@ -165,7 +171,7 @@ async fn claim_release_and_competition_lifecycle() {
     );
     assert_eq!(
         interaction_get(home.path(), &interaction_id).await["leaseOwner"],
-        "lease-a"
+        owner_a
     );
 
     // An overlong ttl is explicitly rejected (超长 ttl 明确拒绝) — the usage
@@ -239,10 +245,10 @@ async fn claim_release_and_competition_lifecycle() {
     let rev_after_renew = renew["revision"].as_str().unwrap().to_owned();
     assert_ne!(rev_after_renew, rev_after_claim);
 
-    // Responding does not require the lease (租约不授予审批权): a client
-    // holding no lease answers fine with the fresh revision, and the leased
-    // run completes.
-    let out = await_cli(
+    // Active lease enforces fencing token on `interaction.respond`: missing or
+    // mismatched `leaseId` is rejected with `LEASE_CONFLICT` and zero side
+    // effects before the holder answers cleanly with the matching `leaseId`.
+    let out_missing = await_cli(
         home.path(),
         &[
             "interaction",
@@ -254,11 +260,57 @@ async fn claim_release_and_competition_lifecycle() {
             "--expected-revision",
             &rev_after_renew,
             "--answer",
+            "{\"text\":\"unauthorized answer\"}",
+        ],
+    );
+    assert_eq!(
+        expect_failed("interaction.respond", &out_missing),
+        "LEASE_CONFLICT",
+        "responding without active leaseId must return LEASE_CONFLICT"
+    );
+    let out_wrong = await_cli(
+        home.path(),
+        &[
+            "interaction",
+            "respond",
+            "--output",
+            "json",
+            "--interaction-id",
+            &interaction_id,
+            "--expected-revision",
+            &rev_after_renew,
+            "--lease-id",
+            "lease-wrong",
+            "--answer",
+            "{\"text\":\"wrong lease answer\"}",
+        ],
+    );
+    assert_eq!(
+        expect_failed("interaction.respond", &out_wrong),
+        "LEASE_CONFLICT",
+        "responding with mismatched leaseId must return LEASE_CONFLICT"
+    );
+
+    let out = await_cli(
+        home.path(),
+        &[
+            "interaction",
+            "respond",
+            "--output",
+            "json",
+            "--interaction-id",
+            &interaction_id,
+            "--expected-revision",
+            &rev_after_renew,
+            "--lease-id",
+            "lease-a",
+            "--answer",
             "{\"text\":\"leased answer\"}",
         ],
     );
     let responded = expect_ok("interaction.respond", &out);
     assert_eq!(responded["interaction"]["state"], "answered");
+    assert_eq!(responded["interaction"]["leaseOwner"], Value::Null);
     let rev_after_answer = responded["interaction"]["revision"]
         .as_str()
         .unwrap()
@@ -289,8 +341,8 @@ async fn claim_release_and_competition_lifecycle() {
         "claim on an answered dialog must be REVISION_CONFLICT"
     );
 
-    // Releasing the still-live lease after the answer drops only the lease
-    // (不代表回答或拒绝): the dialog stays answered.
+    // Releasing after an answer that already consumed the lease is an idempotent
+    // no-op (`released: false`), leaving the dialog answered and unleased.
     let out = await_cli(
         home.path(),
         &[
@@ -307,7 +359,7 @@ async fn claim_release_and_competition_lifecycle() {
         ],
     );
     let released = expect_ok("interaction.release", &out);
-    assert_eq!(released["released"], true);
+    assert_eq!(released["released"], false);
     let got = interaction_get(home.path(), &interaction_id).await;
     assert_eq!(got["state"], "answered");
     assert_eq!(got["leaseOwner"], Value::Null);
@@ -365,10 +417,11 @@ async fn claim_release_and_competition_lifecycle() {
     );
     let takeover = expect_ok("interaction.claim", &out);
     let rev2_after_takeover = takeover["revision"].as_str().unwrap().to_owned();
-    assert_eq!(
-        interaction_get(home.path(), &iid2).await["leaseOwner"],
-        "lease-y"
-    );
+    let owner_y = interaction_get(home.path(), &iid2).await["leaseOwner"]
+        .as_str()
+        .expect("leaseOwner after takeover")
+        .to_owned();
+    assert!(owner_y.starts_with("lease-") && owner_y != "lease-y");
 
     // The old lease cannot release the new owner (旧 lease 不能释放新 owner).
     let out = await_cli(
@@ -528,4 +581,72 @@ async fn release_without_a_live_lease_reports_false() {
         ],
     );
     expect_ok("interaction.claim", &out);
+}
+
+#[tokio::test]
+async fn release_on_expired_interaction_after_gateway_restart_cleans_up() {
+    let home = TestHome::new("ia-lease-expired-rel");
+    init_home(home.path());
+    let (_project_id, session_id) = seed_project_session(home.path(), "ia-exprel").await;
+
+    let run = submit_run(
+        home.path(),
+        &session_id,
+        "[pd-driver:question]",
+        "ia-exprel-1",
+    )
+    .await;
+    let run_id = run["runId"].as_str().unwrap().to_owned();
+    let (interaction_id, revision) = poll_pending_question(home.path(), &run_id).await;
+
+    let claimed = await_cli(
+        home.path(),
+        &[
+            "interaction",
+            "claim",
+            "--output",
+            "json",
+            "--interaction-id",
+            &interaction_id,
+            "--expected-revision",
+            &revision,
+            "--lease-id",
+            "lease-secret",
+        ],
+    );
+    let _ = expect_ok("interaction.claim", &claimed);
+
+    // Restart the isolated gateway so pending interactions transition to `expired`.
+    let pid = home.gateway_pid().expect("gateway pid");
+    signal_pid(pid, rustix::process::Signal::KILL);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    let after_restart = interaction_get(home.path(), &interaction_id).await;
+    assert_eq!(after_restart["state"], "expired");
+    let exp_rev = after_restart["revision"].as_str().unwrap().to_owned();
+
+    // Release on an already-expired interaction clears residual lease state
+    // and answers `released: false` even under a different leaseId.
+    let rel = await_cli(
+        home.path(),
+        &[
+            "interaction",
+            "release",
+            "--output",
+            "json",
+            "--interaction-id",
+            &interaction_id,
+            "--expected-revision",
+            &exp_rev,
+            "--lease-id",
+            "lease-other",
+        ],
+    );
+    let rel_ok = expect_ok("interaction.release", &rel);
+    assert_eq!(rel_ok["released"], false);
+    assert_eq!(rel_ok["revision"], exp_rev);
+    assert_eq!(
+        interaction_get(home.path(), &interaction_id).await["leaseOwner"],
+        Value::Null
+    );
 }

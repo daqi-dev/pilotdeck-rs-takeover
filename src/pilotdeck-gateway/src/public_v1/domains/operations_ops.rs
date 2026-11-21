@@ -40,22 +40,32 @@
 //! task's acceptance anchor "跨页变更不静默假完整"). `complete: true` is
 //! therefore only ever reported for a view the caller has seen unchanged.
 
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::sync::Arc;
 
-use agentcpm_pd_protocol::contract::ResponseOutcome;
+use agentcpm_pd_protocol::contract::{EventEnvelope, GapFrame, GapRecoveryPolicy, ResponseOutcome};
 use agentcpm_pd_protocol::envelope::compute_input_digest;
 use agentcpm_pd_protocol::errors::{
     CODE_CANCELLATION_UNSUPPORTED, CODE_CAPABILITY_UNAVAILABLE, CODE_CURSOR_EXPIRED,
     CODE_IDEMPOTENCY_CONFLICT, CODE_INVALID_ARGUMENT, CODE_NOT_FOUND, CODE_RESOURCE_LIMIT,
     CODE_SNAPSHOT_CHANGED, CODE_UNAVAILABLE, ContractError, EffectStatus, RetrySpec,
 };
-use rusqlite::{Connection, OptionalExtension, params};
+use agentcpm_pd_protocol::wire::{
+    JSONRPC_VERSION, JsonRpcNotification, SubEventNotification, WIRE_SUB_EVENT,
+};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
+use tokio::sync::Notify;
 
+use crate::public_v1::PublicV1State;
 use crate::public_v1::domains::DomainRegistry;
+use crate::public_v1::domains::artifacts::publish_artifact;
+use crate::public_v1::domains::workspace_dirs::relative_components;
 use crate::public_v1::runtime::{DispatchError, PublicV1Runtime};
 use crate::public_v1::store::{V1Store, format_cursor, now_rfc3339, parse_cursor};
+use crate::public_v1::ws::{StreamFetch, StreamFrame, StreamSource};
 
 // ---------------------------------------------------------------------------
 // Schema (executed by V1Store::init_schema through the domain registry)
@@ -139,6 +149,22 @@ pub(super) fn register(reg: &mut DomainRegistry) {
     reg.handler("system.diagnostics", |rt, input, _key, _rev| {
         Box::pin(system_diagnostics(rt, input))
     });
+    crate::public_v1::ws::register_stream_source("operations.events", operations_events_source);
+}
+
+async fn run_blocking<T, F>(task: F) -> Result<T, ContractError>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, ContractError> + Send + 'static,
+{
+    tokio::task::spawn_blocking(task).await.map_err(|err| {
+        ContractError::new(
+            CODE_UNAVAILABLE,
+            format!("operations worker failed: {err}"),
+            RetrySpec::backoff_read(Some(250)),
+            EffectStatus::Unknown,
+        )
+    })?
 }
 
 // ---------------------------------------------------------------------------
@@ -836,6 +862,24 @@ fn read_domain_operations(conn: &Connection) -> Result<Vec<UnifiedOperation>, Co
                 updated_at,
             ],
         );
+        let result_val = completion_json
+            .as_deref()
+            .and_then(|text| serde_json::from_str::<Value>(text).ok());
+        let error = if state == "failed" {
+            let code = result_val
+                .as_ref()
+                .and_then(|v| v.get("code"))
+                .and_then(Value::as_str)
+                .unwrap_or(CODE_UNAVAILABLE);
+            let message = result_val
+                .as_ref()
+                .and_then(|v| v.get("message"))
+                .and_then(Value::as_str)
+                .unwrap_or("domain operation failed");
+            Some(issue_json(code, message))
+        } else {
+            None
+        };
         out.push(UnifiedOperation {
             source: "v1_domain_operations",
             operation_id,
@@ -849,9 +893,9 @@ fn read_domain_operations(conn: &Connection) -> Result<Vec<UnifiedOperation>, Co
             cancel_requested: false,
             effect_status: "known".to_owned(),
             progress: Vec::new(),
-            result: completion_json.and_then(|text| serde_json::from_str(&text).ok()),
+            result: if state == "failed" { None } else { result_val },
             result_schema_id: None,
-            error: None,
+            error,
             final_cursor: None,
             terminal: is_terminal_operation_state(&state),
             created_at,
@@ -940,7 +984,9 @@ impl V1Store {
     ) -> Result<(String, String), ContractError> {
         let operation_id = self.next_id();
         let mut conn = self.conn.lock().expect("sqlite mutex");
-        let tx = conn.transaction().map_err(sql_err)?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sql_err)?;
         let rev = next_op_rev_in_tx(&tx)?;
         let now = now_rfc3339();
         let (scope_kind, project_id, session_id) = split_scope(scope);
@@ -978,7 +1024,9 @@ impl V1Store {
     /// Idempotent: an already-running (or terminal) operation is a no-op.
     pub fn mark_operation_running(&self, operation_id: &str) -> Result<(), ContractError> {
         let mut conn = self.conn.lock().expect("sqlite mutex");
-        let tx = conn.transaction().map_err(sql_err)?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sql_err)?;
         let row: Option<(String, String)> = tx
             .query_row(
                 "SELECT state, COALESCE(session_id, '') FROM operations WHERE operation_id = ?1",
@@ -1023,7 +1071,9 @@ impl V1Store {
         value: &Value,
     ) -> Result<(), ContractError> {
         let mut conn = self.conn.lock().expect("sqlite mutex");
-        let tx = conn.transaction().map_err(sql_err)?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sql_err)?;
         let row: Option<(String, String)> = tx
             .query_row(
                 "SELECT progress_json, COALESCE(session_id, '') FROM operations WHERE operation_id = ?1",
@@ -1068,7 +1118,9 @@ impl V1Store {
         outcome: LongOperationOutcome,
     ) -> Result<(), ContractError> {
         let mut conn = self.conn.lock().expect("sqlite mutex");
-        let tx = conn.transaction().map_err(sql_err)?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sql_err)?;
         let row: Option<(bool, String)> = tx
             .query_row(
                 "SELECT terminal, COALESCE(session_id, '') FROM operations WHERE operation_id = ?1",
@@ -1245,14 +1297,16 @@ async fn operations_get(
     rt: Arc<PublicV1Runtime>,
     input: Value,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
-    let operation_id = input["operationId"].as_str().unwrap_or_default();
-    let conn = rt.store().conn.lock().expect("sqlite mutex");
-    let op = find_unified_operation(&conn, operation_id)?
-        .ok_or_else(|| not_found("operation", operation_id))?;
-    Ok((
-        ResponseOutcome::Succeeded,
-        json!({"operation": op.to_contract_json()}),
-    ))
+    let operation_id = input["operationId"].as_str().unwrap_or_default().to_owned();
+    let store = rt.store().clone();
+    let result = run_blocking(move || {
+        let conn = store.conn.lock().expect("sqlite mutex");
+        let op = find_unified_operation(&conn, &operation_id)?
+            .ok_or_else(|| not_found("operation", &operation_id))?;
+        Ok(json!({"operation": op.to_contract_json()}))
+    })
+    .await?;
+    Ok((ResponseOutcome::Succeeded, result))
 }
 
 async fn operations_list(
@@ -1263,85 +1317,91 @@ async fn operations_list(
         .get("scope")
         .cloned()
         .ok_or_else(|| invalid("`scope` is required".to_owned()))?;
-    let operation_type = input.get("operationType").and_then(Value::as_str);
-    let state = input.get("state").and_then(Value::as_str);
-    if let Some(state) = state
-        && !is_valid_operation_state(state)
+    let operation_type = input
+        .get("operationType")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned);
+    let state = input
+        .get("state")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned);
+    if let Some(state_val) = state.as_deref()
+        && !is_valid_operation_state(state_val)
     {
-        return Err(invalid(format!("unknown operation state `{state}`")).into());
+        return Err(invalid(format!("unknown operation state `{state_val}`")).into());
     }
     let limit = page_limit(input.get("page"))?;
-
-    let conn = rt.store().conn.lock().expect("sqlite mutex");
-    let listed: Vec<UnifiedOperation> = unified_operations(&conn)?
-        .into_iter()
-        .filter(|op| scope_matches(op, &scope))
-        .filter(|op| operation_type.is_none_or(|t| op.operation_type == t))
-        .filter(|op| state.is_none_or(|s| op.state == s))
-        .collect();
-    let digest = view_digest(&listed);
-
-    let offset = match input
+    let cursor = input
         .get("page")
         .and_then(|p| p.get("cursor"))
         .and_then(Value::as_str)
-    {
-        None => 0usize,
-        Some(raw) => match parse_view_cursor(raw) {
-            Some((pinned, off)) => {
-                if pinned != digest {
+        .map(ToOwned::to_owned);
+
+    let store = rt.store().clone();
+    let result = run_blocking(move || {
+        let conn = store.conn.lock().expect("sqlite mutex");
+        let listed: Vec<UnifiedOperation> = unified_operations(&conn)?
+            .into_iter()
+            .filter(|op| scope_matches(op, &scope))
+            .filter(|op| operation_type.as_deref().is_none_or(|t| op.operation_type == t))
+            .filter(|op| state.as_deref().is_none_or(|s| op.state == s))
+            .collect();
+        let digest = view_digest(&listed);
+
+        let offset = match cursor.as_deref() {
+            None => 0usize,
+            Some(raw) => match parse_view_cursor(raw) {
+                Some((pinned, off)) => {
+                    if pinned != digest {
+                        return Err(ContractError::new(
+                            CODE_SNAPSHOT_CHANGED,
+                            "the operation listing changed while paging; restart the query from the first page",
+                            RetrySpec::after_reconcile(),
+                            EffectStatus::NotApplied,
+                        ));
+                    }
+                    off
+                }
+                None => {
                     return Err(ContractError::new(
-                        CODE_SNAPSHOT_CHANGED,
-                        "the operation listing changed while paging; restart the query from the first page",
+                        CODE_CURSOR_EXPIRED,
+                        format!("invalid pagination cursor `{raw}`"),
                         RetrySpec::after_reconcile(),
                         EffectStatus::NotApplied,
-                    )
-                    .into());
+                    ));
                 }
-                off
-            }
-            None => {
-                return Err(ContractError::new(
-                    CODE_CURSOR_EXPIRED,
-                    format!("invalid pagination cursor `{raw}`"),
-                    RetrySpec::after_reconcile(),
-                    EffectStatus::NotApplied,
-                )
-                .into());
-            }
-        },
-    };
-    if offset > listed.len() {
-        return Err(ContractError::new(
-            CODE_CURSOR_EXPIRED,
-            "pagination cursor beyond the end of the listing",
-            RetrySpec::after_reconcile(),
-            EffectStatus::NotApplied,
-        )
-        .into());
-    }
-    let end = (offset + limit).min(listed.len());
-    let complete = end >= listed.len();
-    let items: Vec<Value> = listed[offset..end]
-        .iter()
-        .map(UnifiedOperation::to_contract_json)
-        .collect();
-    let next_cursor = if complete {
-        Value::Null
-    } else {
-        json!(view_cursor(&digest, end))
-    };
-    Ok((
-        ResponseOutcome::Succeeded,
-        json!({
+            },
+        };
+        if offset > listed.len() {
+            return Err(ContractError::new(
+                CODE_CURSOR_EXPIRED,
+                "pagination cursor beyond the end of the listing",
+                RetrySpec::after_reconcile(),
+                EffectStatus::NotApplied,
+            ));
+        }
+        let end = (offset + limit).min(listed.len());
+        let complete = end >= listed.len();
+        let items: Vec<Value> = listed[offset..end]
+            .iter()
+            .map(UnifiedOperation::to_contract_json)
+            .collect();
+        let next_cursor = if complete {
+            Value::Null
+        } else {
+            json!(view_cursor(&digest, end))
+        };
+        Ok(json!({
             "items": items,
             "pageInfo": {
                 "snapshotRevision": digest,
                 "nextCursor": next_cursor,
                 "complete": complete,
             }
-        }),
-    ))
+        }))
+    })
+    .await?;
+    Ok((ResponseOutcome::Succeeded, result))
 }
 
 fn is_valid_operation_state(state: &str) -> bool {
@@ -1360,16 +1420,24 @@ fn is_valid_operation_state(state: &str) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// operations.events (unary paged read; follow-mode rides sub.open once the
-// stream pump is generalized — see the task report)
+// operations.events (unary paged read + WebSocket StreamSource for follow)
 // ---------------------------------------------------------------------------
 
 async fn operations_events(
     rt: Arc<PublicV1Runtime>,
     input: Value,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
-    let operation_id = input["operationId"].as_str().unwrap_or_default();
-    let after = input.get("afterCursor").and_then(Value::as_str);
+    if input.get("follow").and_then(Value::as_bool) == Some(true) {
+        return Err(invalid(
+            "follow=true is only supported over WebSocket sub.open; open a stream subscription instead".to_owned(),
+        )
+        .into());
+    }
+    let operation_id = input["operationId"].as_str().unwrap_or_default().to_owned();
+    let after = input
+        .get("afterCursor")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned);
     let limit = input
         .get("page")
         .and_then(|p| p.get("limit"))
@@ -1377,20 +1445,20 @@ async fn operations_events(
         .unwrap_or(100)
         .clamp(1, 500) as usize;
 
-    let conn = rt.store().conn.lock().expect("sqlite mutex");
-    let op = find_unified_operation(&conn, operation_id)?
-        .ok_or_else(|| not_found("operation", operation_id))?;
-    let earliest_seq = earliest_retained_seq(&conn)?;
-    let earliest_cursor = format_cursor(earliest_seq);
+    let store = rt.store().clone();
+    let result = run_blocking(move || {
+        let conn = store.conn.lock().expect("sqlite mutex");
+        let op = find_unified_operation(&conn, &operation_id)?
+            .ok_or_else(|| not_found("operation", &operation_id))?;
+        let earliest_seq = earliest_retained_seq(&conn)?;
+        let earliest_cursor = format_cursor(earliest_seq);
 
-    let after_seq = match after {
-        None => 0,
-        Some(c) => match parse_cursor(c) {
-            Some(seq) if seq >= earliest_seq.saturating_sub(1) => seq,
-            Some(_) => {
-                return Ok((
-                    ResponseOutcome::Succeeded,
-                    json!({"frame": {
+        let after_seq = match after.as_deref() {
+            None => earliest_seq.saturating_sub(1),
+            Some(c) => match parse_cursor(c) {
+                Some(seq) if seq >= earliest_seq.saturating_sub(1) => seq,
+                Some(_) => {
+                    return Ok(json!({"frame": {
                         "kind": "gap",
                         "reason": "cursor_expired",
                         "resourceId": operation_id,
@@ -1399,13 +1467,10 @@ async fn operations_events(
                         "earliestCursor": earliest_cursor,
                         "snapshotRevision": op.revision,
                         "recovery": "fetch_snapshot_then_resume",
-                    }}),
-                ));
-            }
-            None => {
-                return Ok((
-                    ResponseOutcome::Succeeded,
-                    json!({"frame": {
+                    }}));
+                }
+                None => {
+                    return Ok(json!({"frame": {
                         "kind": "gap",
                         "reason": "cursor_invalid",
                         "resourceId": operation_id,
@@ -1414,54 +1479,217 @@ async fn operations_events(
                         "earliestCursor": earliest_cursor,
                         "snapshotRevision": op.revision,
                         "recovery": "restart_query",
-                    }}),
-                ));
-            }
-        },
-    };
-
-    let events = fetch_operation_events_after(&conn, operation_id, after_seq, limit)?;
-    let high_watermark: Option<String> = conn
-        .query_row(
-            "SELECT cursor FROM events WHERE resource_id = ?1 ORDER BY seq DESC LIMIT 1",
-            params![operation_id],
-            |r| r.get(0),
-        )
-        .optional()
-        .map_err(sql_err)?;
-    let next_cursor = events.last().map(|e| e.0.clone());
-    let event_objs: Vec<Value> = events
-        .iter()
-        .map(
-            |(cursor, event_type, schema_id, payload_json, occurred_at, data_json)| {
-                json!({
-                    "resourceId": operation_id,
-                    "cursor": cursor,
-                    "type": event_type,
-                    "schemaId": schema_id,
-                    "payload": serde_json::from_str::<Value>(payload_json).unwrap_or(Value::Null),
-                    "occurredAt": occurred_at,
-                    "version": "agentcpm-pd.event/1",
-                    "instanceId": rt.store().meta().instance_id,
-                    "data": serde_json::from_str::<Value>(data_json).unwrap_or(json!({})),
-                })
+                    }}));
+                }
             },
-        )
-        .collect();
-    let caught_up = match (&next_cursor, &high_watermark) {
-        (Some(nc), Some(hw)) => nc == hw,
-        _ => true,
-    };
-    Ok((
-        ResponseOutcome::Succeeded,
-        json!({"frame": {
+        };
+
+        let events = fetch_operation_events_after(&conn, &operation_id, after_seq, limit)?;
+        let high_watermark: Option<String> = conn
+            .query_row(
+                "SELECT cursor FROM events WHERE resource_id = ?1 ORDER BY seq DESC LIMIT 1",
+                params![operation_id],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(sql_err)?;
+        let next_cursor = events.last().map(|e| e.1.clone());
+        let instance_id = store.meta().instance_id.clone();
+        let event_objs: Vec<Value> = events
+            .iter()
+            .map(
+                |(_seq, cursor, event_type, schema_id, payload_json, occurred_at, data_json)| {
+                    json!({
+                        "resourceId": operation_id,
+                        "cursor": cursor,
+                        "type": event_type,
+                        "schemaId": schema_id,
+                        "payload": serde_json::from_str::<Value>(payload_json).unwrap_or(Value::Null),
+                        "occurredAt": occurred_at,
+                        "version": "agentcpm-pd.event/1",
+                        "instanceId": instance_id,
+                        "data": serde_json::from_str::<Value>(data_json).unwrap_or(json!({})),
+                    })
+                },
+            )
+            .collect();
+        let caught_up = match (&next_cursor, &high_watermark) {
+            (Some(nc), Some(hw)) => nc == hw,
+            _ => true,
+        };
+        Ok(json!({"frame": {
             "events": event_objs,
             "nextCursor": next_cursor,
             "highWatermark": high_watermark,
             "caughtUp": caught_up,
             "terminal": op.terminal && caught_up,
-        }}),
-    ))
+        }}))
+    })
+    .await?;
+    Ok((ResponseOutcome::Succeeded, result))
+}
+
+fn op_cursor_expired_error(
+    requested: &str,
+    earliest: &str,
+    revision: &str,
+    recovery: GapRecoveryPolicy,
+    message: String,
+) -> ContractError {
+    let mut details = serde_json::Map::new();
+    details.insert(
+        "gap".to_owned(),
+        serde_json::to_value(GapFrame {
+            kind: "gap".to_owned(),
+            requested_cursor: Some(requested.to_owned()),
+            earliest_cursor: Some(earliest.to_owned()),
+            snapshot_revision: revision.to_owned(),
+            recovery,
+        })
+        .unwrap_or(Value::Null),
+    );
+    let mut err = ContractError::new(
+        CODE_CURSOR_EXPIRED,
+        message,
+        RetrySpec::after_reconcile(),
+        EffectStatus::NotApplied,
+    );
+    err.details = Some(details);
+    err
+}
+
+struct OperationsEventsSource {
+    store: Arc<V1Store>,
+    instance_id: String,
+    operation_id: String,
+    sub_id: String,
+    last_fetched_seq: i64,
+}
+
+fn operations_events_source(
+    state: &Arc<PublicV1State>,
+    input: &Value,
+    sub_id: &str,
+) -> Result<Box<dyn StreamSource>, ContractError> {
+    let operation_id = input
+        .get("operationId")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| invalid("`operationId` is required".to_owned()))?
+        .to_owned();
+    let after_cursor = input
+        .get("afterCursor")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned);
+    let store = state.runtime.store().clone();
+    let instance_id = store.meta().instance_id.clone();
+
+    let start_seq = {
+        let conn = store.conn.lock().expect("sqlite mutex");
+        let op = find_unified_operation(&conn, &operation_id)?
+            .ok_or_else(|| not_found("operation", &operation_id))?;
+        let earliest_seq = earliest_retained_seq(&conn)?;
+        let earliest_cursor = format_cursor(earliest_seq);
+        match after_cursor.as_deref() {
+            None => earliest_seq.saturating_sub(1),
+            Some(c) => match parse_cursor(c) {
+                Some(seq) if seq >= earliest_seq.saturating_sub(1) => seq,
+                Some(_) => {
+                    return Err(op_cursor_expired_error(
+                        c,
+                        &earliest_cursor,
+                        &op.revision,
+                        GapRecoveryPolicy::FetchSnapshotThenResume,
+                        format!(
+                            "afterCursor `{c}` is older than the earliest retained event; recover via operations.snapshot -> checkpoint.cursor -> sub.open"
+                        ),
+                    ));
+                }
+                None => {
+                    return Err(op_cursor_expired_error(
+                        c,
+                        &earliest_cursor,
+                        &op.revision,
+                        GapRecoveryPolicy::RestartQuery,
+                        format!("invalid cursor `{c}`"),
+                    ));
+                }
+            },
+        }
+    };
+
+    Ok(Box::new(OperationsEventsSource {
+        store,
+        instance_id,
+        operation_id,
+        sub_id: sub_id.to_owned(),
+        last_fetched_seq: start_seq,
+    }))
+}
+
+impl StreamSource for OperationsEventsSource {
+    fn fetch_next(&mut self, batch: usize) -> Result<StreamFetch, ContractError> {
+        let conn = self.store.conn.lock().expect("sqlite mutex");
+        let op = find_unified_operation(&conn, &self.operation_id)?
+            .ok_or_else(|| not_found("operation", &self.operation_id))?;
+        let earliest_seq = earliest_retained_seq(&conn)?;
+        if self.last_fetched_seq < earliest_seq.saturating_sub(1) {
+            return Err(op_cursor_expired_error(
+                &format_cursor(self.last_fetched_seq),
+                &format_cursor(earliest_seq),
+                &op.revision,
+                GapRecoveryPolicy::FetchSnapshotThenResume,
+                "event cursor fell behind retained history; recover via operations.snapshot"
+                    .to_owned(),
+            ));
+        }
+
+        let events =
+            fetch_operation_events_after(&conn, &self.operation_id, self.last_fetched_seq, batch)?;
+        let mut frames = Vec::with_capacity(events.len());
+        for (seq, cursor, event_type, _schema_id, _payload_json, _occurred_at, data_json) in events
+        {
+            self.last_fetched_seq = seq;
+            let data_val: Value = serde_json::from_str(&data_json).unwrap_or_else(|_| json!({}));
+            let data = data_val.as_object().cloned().unwrap_or_default();
+            let notif = JsonRpcNotification {
+                jsonrpc: JSONRPC_VERSION.to_owned(),
+                method: WIRE_SUB_EVENT.to_owned(),
+                params: serde_json::to_value(SubEventNotification {
+                    subscription_id: self.sub_id.clone(),
+                    event: EventEnvelope {
+                        version: "agentcpm-pd.event/1".to_owned(),
+                        instance_id: self.instance_id.clone(),
+                        run_id: None,
+                        operation_id: Some(self.operation_id.clone()),
+                        subscription_id: Some(self.sub_id.clone()),
+                        cursor: cursor.clone(),
+                        event_type,
+                        data,
+                    },
+                })
+                .unwrap_or(Value::Null),
+            };
+            let text = serde_json::to_string(&notif).unwrap_or_default();
+            frames.push(StreamFrame {
+                estimated_bytes: text.len() + 128,
+                text,
+                cursor,
+            });
+        }
+        Ok(StreamFetch {
+            frames,
+            stream_ended: op.terminal,
+        })
+    }
+
+    fn wake(&self) -> Arc<Notify> {
+        self.store.event_notifier()
+    }
+
+    fn oversized_recovery_hint(&self) -> &'static str {
+        "resume from operations.snapshot"
+    }
 }
 
 fn earliest_retained_seq(conn: &Connection) -> Result<i64, ContractError> {
@@ -1482,22 +1710,23 @@ fn fetch_operation_events_after(
     operation_id: &str,
     after_seq: i64,
     limit: usize,
-) -> Result<Vec<(String, String, String, String, String, String)>, ContractError> {
+) -> Result<Vec<(i64, String, String, String, String, String, String)>, ContractError> {
     let mut stmt = conn
         .prepare(
-            "SELECT cursor, event_type, schema_id, payload_json, occurred_at, data_json
+            "SELECT seq, cursor, event_type, schema_id, payload_json, occurred_at, data_json
              FROM events WHERE resource_id = ?1 AND seq > ?2 ORDER BY seq ASC LIMIT ?3",
         )
         .map_err(sql_err)?;
     let rows = stmt
         .query_map(params![operation_id, after_seq, limit as i64], |r| {
             Ok((
-                r.get::<_, String>(0)?,
+                r.get::<_, i64>(0)?,
                 r.get::<_, String>(1)?,
                 r.get::<_, String>(2)?,
                 r.get::<_, String>(3)?,
                 r.get::<_, String>(4)?,
                 r.get::<_, String>(5)?,
+                r.get::<_, String>(6)?,
             ))
         })
         .map_err(sql_err)?
@@ -1516,176 +1745,176 @@ async fn operations_cancel(
     key: Option<String>,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
     let operation_id = input["operationId"].as_str().unwrap_or_default().to_owned();
-    let instance_id = rt.store().meta().instance_id.clone();
-    let lookup_input = json!({"instanceId": instance_id, "operationId": operation_id});
-    let digest = compute_input_digest("operations.cancel", &lookup_input);
-    let retained_until = {
-        use chrono::Duration;
-        (chrono::Utc::now() + Duration::days(7)).to_rfc3339()
-    };
+    let store = rt.store().clone();
+    let result = run_blocking(move || {
+        let instance_id = store.meta().instance_id.clone();
+        let lookup_input = json!({"instanceId": instance_id, "operationId": operation_id});
+        let digest = compute_input_digest("operations.cancel", &lookup_input);
+        let retained_until = {
+            use chrono::Duration;
+            (chrono::Utc::now() + Duration::days(7)).to_rfc3339()
+        };
 
-    let store = rt.store();
-    let mut conn = store.conn.lock().expect("sqlite mutex");
-    let tx = conn.transaction().map_err(sql_err)?;
-    let now = now_rfc3339();
+        let mut conn = store.conn.lock().expect("sqlite mutex");
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sql_err)?;
+        let now = now_rfc3339();
 
-    // Idempotency (mirror of run.cancel's machinery): same key + same input
-    // replays the stored receipt; a different input conflicts.
-    if let Some(key) = key.as_deref() {
-        let existing: Option<(String, String, Option<String>)> = tx
+        // Idempotency (mirror of run.cancel's machinery): same key + same input
+        // replays the stored receipt; a different input conflicts.
+        if let Some(key) = key.as_deref() {
+            let existing: Option<(String, String, Option<String>)> = tx
+                .query_row(
+                    "SELECT input_digest, request_state, receipt_json
+                     FROM idempotency_records WHERE idempotency_key = ?1 AND method_id = 'operations.cancel'",
+                    params![key],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                )
+                .optional()
+                .map_err(sql_err)?;
+            if let Some((stored_digest, req_state, receipt_json)) = existing {
+                if stored_digest != digest {
+                    return Err(ContractError::new(
+                        CODE_IDEMPOTENCY_CONFLICT,
+                        format!(
+                            "idempotencyKey `{key}` already used for operations.cancel with a different operationId"
+                        ),
+                        RetrySpec::never(),
+                        EffectStatus::NotApplied,
+                    ));
+                }
+                if req_state == "accepted"
+                    && let Some(raw) = receipt_json
+                    && let Ok(receipt) = serde_json::from_str::<Value>(&raw)
+                {
+                    return Ok(json!({"receipt": receipt}));
+                }
+            }
+        }
+
+        let row: Option<(String, String, i64, i64, String, bool)> = tx
             .query_row(
-                "SELECT input_digest, request_state, receipt_json
-                 FROM idempotency_records WHERE idempotency_key = ?1 AND method_id = 'operations.cancel'",
-                params![key],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                "SELECT state, revision, cancel_requested, cancellable, COALESCE(session_id, ''), terminal
+                 FROM operations WHERE operation_id = ?1",
+                params![operation_id],
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, i64>(2)?,
+                        r.get::<_, i64>(3)?,
+                        r.get::<_, String>(4)?,
+                        r.get::<_, i64>(5)? != 0,
+                    ))
+                },
             )
             .optional()
             .map_err(sql_err)?;
-        if let Some((stored_digest, req_state, receipt_json)) = existing {
-            if stored_digest != digest {
-                return Err(ContractError::new(
-                    CODE_IDEMPOTENCY_CONFLICT,
-                    format!(
-                        "idempotencyKey `{key}` already used for operations.cancel with a different operationId"
-                    ),
-                    RetrySpec::never(),
-                    EffectStatus::NotApplied,
+
+        let Some((state, revision, cancel_requested, cancellable, session_id, terminal)) = row else {
+            // Not a seam-owned row: either it exists in a foreign projection
+            // (no cancellation path there) or it does not exist at all.
+            let foreign = find_unified_operation(&tx, &operation_id)?;
+            let error = match foreign {
+                Some(_) => cancellation_unsupported(
+                    &operation_id,
+                    "this operation type has no cancellation path",
+                ),
+                None => not_found("operation", &operation_id),
+            };
+            if let Some(key) = key.as_deref() {
+                tx.execute(
+                    "INSERT OR REPLACE INTO idempotency_records
+                        (idempotency_key, method_id, input_digest, request_state, reason, resource_json,
+                         receipt_json, rejection_code, observed_at, retained_until, retry_disposition)
+                     VALUES (?1, 'operations.cancel', ?2, 'notAccepted', 'definitivelyRejected', NULL, NULL, ?3, ?4, ?5, 'correctRejectedInputWithNewKey')",
+                    params![key, digest, error.code, now, retained_until],
                 )
-                .into());
+                .map_err(sql_err)?;
+                tx.commit().map_err(sql_err)?;
             }
-            if req_state == "accepted"
-                && let Some(raw) = receipt_json
-                && let Ok(receipt) = serde_json::from_str::<Value>(&raw)
-            {
-                return Ok((ResponseOutcome::Succeeded, json!({"receipt": receipt})));
+            return Err(error);
+        };
+
+        let receipt = if terminal {
+            json!({
+                "disposition": "alreadyTerminal",
+                "revision": revision,
+                "state": state,
+            })
+        } else if cancellable == 0 {
+            // Seam-owned but non-cancellable (e.g. a migration that cannot stop).
+            let error =
+                cancellation_unsupported(&operation_id, "this operation type cannot be cancelled");
+            if let Some(key) = key.as_deref() {
+                tx.execute(
+                    "INSERT OR REPLACE INTO idempotency_records
+                        (idempotency_key, method_id, input_digest, request_state, reason, resource_json,
+                         receipt_json, rejection_code, observed_at, retained_until, retry_disposition)
+                     VALUES (?1, 'operations.cancel', ?2, 'notAccepted', 'definitivelyRejected', NULL, NULL, ?3, ?4, ?5, 'correctRejectedInputWithNewKey')",
+                    params![key, digest, error.code, now, retained_until],
+                )
+                .map_err(sql_err)?;
             }
-        }
-    }
-
-    let row: Option<(
-        String,
-        String,
-        i64,
-        i64,
-        String,
-        bool,
-    )> = tx
-        .query_row(
-            "SELECT state, revision, cancel_requested, cancellable, COALESCE(session_id, ''), terminal
-             FROM operations WHERE operation_id = ?1",
-            params![operation_id],
-            |r| {
-                Ok((
-                    r.get::<_, String>(0)?,
-                    r.get::<_, String>(1)?,
-                    r.get::<_, i64>(2)?,
-                    r.get::<_, i64>(3)?,
-                    r.get::<_, String>(4)?,
-                    r.get::<_, i64>(5)? != 0,
-                ))
-            },
-        )
-        .optional()
-        .map_err(sql_err)?;
-
-    let Some((state, revision, cancel_requested, cancellable, session_id, terminal)) = row else {
-        // Not a seam-owned row: either it exists in a foreign projection
-        // (no cancellation path there) or it does not exist at all.
-        let foreign = find_unified_operation(&tx, &operation_id)?;
-        let error = match foreign {
-            Some(_) => cancellation_unsupported(
+            tx.commit().map_err(sql_err)?;
+            return Err(error);
+        } else if cancel_requested != 0 {
+            // Repeated cancel: exactly one durable intent — replay the current
+            // state without writing a second request.
+            json!({
+                "disposition": "requested",
+                "revision": revision,
+                "state": state,
+            })
+        } else {
+            let new_rev = next_op_rev_in_tx(&tx)?;
+            append_operation_event_in_tx(
+                &tx,
+                &instance_id,
                 &operation_id,
-                "this operation type has no cancellation path",
-            ),
-            None => not_found("operation", &operation_id),
+                &session_id,
+                "operation.cancel_requested",
+                &json!({"operationId": operation_id}),
+            )?;
+            tx.execute(
+                "UPDATE operations SET cancel_requested = 1, state = 'cancelling', revision = ?1, updated_at = ?2
+                 WHERE operation_id = ?3",
+                params![new_rev, now_rfc3339(), operation_id],
+            )
+            .map_err(sql_err)?;
+            json!({
+                "disposition": "requested",
+                "revision": new_rev,
+                "state": "cancelling",
+            })
         };
         if let Some(key) = key.as_deref() {
             tx.execute(
                 "INSERT OR REPLACE INTO idempotency_records
                     (idempotency_key, method_id, input_digest, request_state, reason, resource_json,
                      receipt_json, rejection_code, observed_at, retained_until, retry_disposition)
-                 VALUES (?1, 'operations.cancel', ?2, 'notAccepted', 'definitivelyRejected', NULL, NULL, ?3, ?4, ?5, 'correctRejectedInputWithNewKey')",
-                params![key, digest, error.code, now, retained_until],
-            )
-            .map_err(sql_err)?;
-            tx.commit().map_err(sql_err)?;
-        }
-        return Err(error.into());
-    };
-
-    let receipt = if terminal {
-        json!({
-            "disposition": "alreadyTerminal",
-            "revision": revision,
-            "state": state,
-        })
-    } else if cancellable == 0 {
-        // Seam-owned but non-cancellable (e.g. a migration that cannot stop).
-        let error =
-            cancellation_unsupported(&operation_id, "this operation type cannot be cancelled");
-        if let Some(key) = key.as_deref() {
-            tx.execute(
-                "INSERT OR REPLACE INTO idempotency_records
-                    (idempotency_key, method_id, input_digest, request_state, reason, resource_json,
-                     receipt_json, rejection_code, observed_at, retained_until, retry_disposition)
-                 VALUES (?1, 'operations.cancel', ?2, 'notAccepted', 'definitivelyRejected', NULL, NULL, ?3, ?4, ?5, 'correctRejectedInputWithNewKey')",
-                params![key, digest, error.code, now, retained_until],
+                 VALUES (?1, 'operations.cancel', ?2, 'accepted', 'receiptFound', ?3, ?4, NULL, ?5, ?6, 'doNotReplay')",
+                params![
+                    key,
+                    digest,
+                    serde_json::to_string(&json!({"kind": "operation", "operationId": operation_id}))
+                        .unwrap_or_default(),
+                    serde_json::to_string(&receipt).unwrap_or_default(),
+                    now,
+                    retained_until
+                ],
             )
             .map_err(sql_err)?;
         }
         tx.commit().map_err(sql_err)?;
-        return Err(error.into());
-    } else if cancel_requested != 0 {
-        // Repeated cancel: exactly one durable intent — replay the current
-        // state without writing a second request.
-        json!({
-            "disposition": "requested",
-            "revision": revision,
-            "state": state,
-        })
-    } else {
-        let new_rev = next_op_rev_in_tx(&tx)?;
-        append_operation_event_in_tx(
-            &tx,
-            &instance_id,
-            &operation_id,
-            &session_id,
-            "operation.cancel_requested",
-            &json!({"operationId": operation_id}),
-        )?;
-        tx.execute(
-            "UPDATE operations SET cancel_requested = 1, state = 'cancelling', revision = ?1, updated_at = ?2
-             WHERE operation_id = ?3",
-            params![new_rev, now_rfc3339(), operation_id],
-        )
-        .map_err(sql_err)?;
-        json!({
-            "disposition": "requested",
-            "revision": new_rev,
-            "state": "cancelling",
-        })
-    };
-    if let Some(key) = key.as_deref() {
-        tx.execute(
-            "INSERT OR REPLACE INTO idempotency_records
-                (idempotency_key, method_id, input_digest, request_state, reason, resource_json,
-                 receipt_json, rejection_code, observed_at, retained_until, retry_disposition)
-             VALUES (?1, 'operations.cancel', ?2, 'accepted', 'receiptFound', ?3, ?4, NULL, ?5, ?6, 'doNotReplay')",
-            params![
-                key,
-                digest,
-                serde_json::to_string(&json!({"kind": "operation", "operationId": operation_id}))
-                    .unwrap_or_default(),
-                serde_json::to_string(&receipt).unwrap_or_default(),
-                now,
-                retained_until
-            ],
-        )
-        .map_err(sql_err)?;
-    }
-    tx.commit().map_err(sql_err)?;
-    store.event_notifier().notify_waiters();
-    Ok((ResponseOutcome::Succeeded, json!({"receipt": receipt})))
+        drop(conn);
+        store.event_notifier().notify_waiters();
+        store.state_notifier().notify_waiters();
+        Ok(json!({"receipt": receipt}))
+    })
+    .await?;
+    Ok((ResponseOutcome::Succeeded, result))
 }
 
 // ---------------------------------------------------------------------------
@@ -1696,50 +1925,94 @@ async fn operations_snapshot(
     rt: Arc<PublicV1Runtime>,
     input: Value,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
-    let operation_id = input["operationId"].as_str().unwrap_or_default();
-    let store = rt.store();
-    let conn = store.conn.lock().expect("sqlite mutex");
-    let op = find_unified_operation(&conn, operation_id)?
-        .ok_or_else(|| not_found("operation", operation_id))?;
+    let operation_id = input["operationId"].as_str().unwrap_or_default().to_owned();
+    let store = rt.store().clone();
+    let result = run_blocking(move || {
+        let (op, op_json, serialized, sha256, checkpoint_cursor, project_id, reused_artifact_id) = {
+            let conn = store.conn.lock().expect("sqlite mutex");
+            let op = find_unified_operation(&conn, &operation_id)?
+                .ok_or_else(|| not_found("operation", &operation_id))?;
 
-    // Same-lock commit watermark: the checkpoint cursor and the state
-    // section come from one consistent read (single store connection).
-    let checkpoint_cursor: String = conn
-        .query_row(
-            "SELECT cursor FROM events WHERE resource_id = ?1 ORDER BY seq DESC LIMIT 1",
-            params![operation_id],
-            |r| r.get(0),
-        )
-        .optional()
-        .map_err(sql_err)?
-        .unwrap_or_else(|| format_cursor(0));
+            // Same-lock commit watermark: when an operation has emitted no events
+            // yet, anchor at `max(global_max_seq, earliest_seq - 1)` instead of
+            // `cur-0` so subsequent `operations.events` resume avoids an expired
+            // cursor loop after event retention advances (#12).
+            let op_last_seq: Option<i64> = conn
+                .query_row(
+                    "SELECT seq FROM events WHERE resource_id = ?1 ORDER BY seq DESC LIMIT 1",
+                    params![operation_id],
+                    |r| r.get(0),
+                )
+                .optional()
+                .map_err(sql_err)?;
+            let global_max_seq: i64 = conn
+                .query_row("SELECT COALESCE(MAX(seq), 0) FROM events", [], |r| r.get(0))
+                .map_err(sql_err)?;
+            let earliest_seq = earliest_retained_seq(&conn)?;
+            let effective_seq = op_last_seq
+                .unwrap_or(global_max_seq)
+                .max(earliest_seq.saturating_sub(1));
+            let checkpoint_cursor = format_cursor(effective_seq);
 
-    // The state section: the projected Operation object, content-addressed
-    // into the immutable artifact table (`INSERT OR IGNORE` keeps a
-    // published artifact byte-identical forever).
-    let state_data = op.to_contract_json();
-    let serialized = serde_json::to_vec(&state_data).unwrap_or_default();
-    let sha256 = format!("{:x}", Sha256::digest(&serialized));
-    let artifact_id = format!("opsnap-{}", &sha256[..24]);
-    conn.execute(
-        "INSERT OR IGNORE INTO operation_state_artifacts
-            (artifact_id, operation_id, schema_id, content_json, sha256, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        params![
-            artifact_id,
-            operation_id,
-            OPERATION_STATE_SECTION_SCHEMA,
-            String::from_utf8_lossy(&serialized),
-            sha256,
-            now_rfc3339()
-        ],
-    )
-    .map_err(sql_err)?;
+            let op_json = op.to_contract_json();
+            let serialized = serde_json::to_vec(&op_json).unwrap_or_default();
+            let sha256 = format!("{:x}", Sha256::digest(&serialized));
+            let project_id = op
+                .scope
+                .get("projectId")
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty())
+                .unwrap_or("instance")
+                .to_owned();
 
-    Ok((
-        ResponseOutcome::Succeeded,
-        json!({
-            "operation": op.to_contract_json(),
+            let reused = if table_exists(&conn, "artifacts")? {
+                let existing: Option<String> = conn
+                    .query_row(
+                        "SELECT artifact_id FROM artifacts
+                         WHERE project_id = ?1 AND sha256 = ?2 AND origin = 'operation_snapshot'
+                         ORDER BY created_at ASC LIMIT 1",
+                        params![project_id, sha256],
+                        |r| r.get(0),
+                    )
+                    .optional()
+                    .map_err(sql_err)?;
+                existing.filter(|id| store.home().join("v1").join("artifacts").join(id).is_file())
+            } else {
+                None
+            };
+            (
+                op,
+                op_json,
+                serialized,
+                sha256,
+                checkpoint_cursor,
+                project_id,
+                reused,
+            )
+        };
+
+        // Publish through the standard artifact store (after dropping `store.conn`
+        // lock!) so `artifacts.get` / `artifacts.read` resolve `artifactId` (#12).
+        let artifact_id = match reused_artifact_id {
+            Some(id) => id,
+            None => {
+                let artifact = publish_artifact(
+                    &store,
+                    &project_id,
+                    "application/json",
+                    Some(&format!("operation-{operation_id}-state.json")),
+                    &serialized,
+                    "operation_snapshot",
+                )?;
+                artifact["artifactId"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned()
+            }
+        };
+
+        Ok(json!({
+            "operation": op_json,
             "snapshot": {
                 "checkpoint": {
                     "instanceId": store.meta().instance_id,
@@ -1755,8 +2028,10 @@ async fn operations_snapshot(
                     "sha256": sha256,
                 }],
             }
-        }),
-    ))
+        }))
+    })
+    .await?;
+    Ok((ResponseOutcome::Succeeded, result))
 }
 
 // ---------------------------------------------------------------------------
@@ -1815,32 +2090,33 @@ async fn resources_snapshot(
         })
         .collect();
 
-    let store = rt.store();
-    let conn = store.conn.lock().expect("sqlite mutex");
-    let observed_at = now_rfc3339();
+    let store = rt.store().clone();
+    let result = run_blocking(move || {
+        let conn = store.conn.lock().expect("sqlite mutex");
+        let observed_at = now_rfc3339();
 
-    let mut snapshots = Vec::with_capacity(resources.len());
-    let mut unchanged = Vec::new();
-    for resource in &resources {
-        let out = resolve_resource_version(&conn, resource)?;
-        if let Some((known_ref, known_rev)) = known.iter().find(|(r, _)| r == resource)
-            && known_rev == &out.revision
-        {
-            unchanged.push(known_ref.clone());
-            continue;
+        let mut snapshots = Vec::with_capacity(resources.len());
+        let mut unchanged = Vec::new();
+        for resource in &resources {
+            let out = resolve_resource_version(&store, &conn, resource)?;
+            if let Some((known_ref, known_rev)) = known.iter().find(|(r, _)| r == resource)
+                && known_rev == &out.revision
+            {
+                unchanged.push(known_ref.clone());
+                continue;
+            }
+            snapshots.push(resource_version_json(&out));
         }
-        snapshots.push(resource_version_json(&out));
-    }
 
-    Ok((
-        ResponseOutcome::Succeeded,
-        json!({
+        Ok(json!({
             "instanceId": store.meta().instance_id,
             "snapshots": snapshots,
             "unchanged": unchanged,
             "observedAt": observed_at,
-        }),
-    ))
+        }))
+    })
+    .await?;
+    Ok((ResponseOutcome::Succeeded, result))
 }
 
 /// The `ResourceVersion` JSON object; shared with the `resources.watch`
@@ -1866,6 +2142,7 @@ pub(super) fn resource_version_json(out: &ResourceVersionOut) -> Value {
 /// resolve through this same function — the authoritative result always
 /// comes from the resource snapshot tables, never from a side cache.
 pub(super) fn resolve_resource_version(
+    store: &V1Store,
     conn: &Connection,
     resource: &Value,
 ) -> Result<ResourceVersionOut, ContractError> {
@@ -2108,6 +2385,7 @@ pub(super) fn resolve_resource_version(
             if !table_exists(conn, "uploads")? {
                 return Ok(unavailable(resource));
             }
+            let filter = project_id.unwrap_or("");
             let mut stmt = conn
                 .prepare(
                     "SELECT upload_id, state, revision, updated_at FROM uploads
@@ -2116,7 +2394,7 @@ pub(super) fn resolve_resource_version(
                 )
                 .map_err(sql_err)?;
             let rows = stmt
-                .query_map(params![project_id], |r| {
+                .query_map(params![filter], |r| {
                     Ok((
                         r.get::<_, String>(0)?,
                         r.get::<_, String>(1)?,
@@ -2139,9 +2417,421 @@ pub(super) fn resolve_resource_version(
                 snapshot_schema_id: Some("resources.uploads.v1"),
             })
         }
-        // files / git / memory / terminal: no revision source this build —
-        // the kinds stay queryable but honestly "unavailable" until their
-        // domains expose one (see the task report).
+        "files" => {
+            if let Some(pid) = project_id.or(resource_id).filter(|s| !s.is_empty()) {
+                match resolve_project_workspace_dir(store, conn, pid)? {
+                    ProjectWorkspace::Absent => Ok(absent_resource(resource)),
+                    ProjectWorkspace::Unavailable => Ok(unavailable(resource)),
+                    ProjectWorkspace::Dir(ws_dir) => {
+                        let Ok(parts) = fingerprint_workspace_files(&ws_dir) else {
+                            return Ok(unavailable(resource));
+                        };
+                        Ok(ResourceVersionOut {
+                            resource: resource.clone(),
+                            revision: digest_revision("rsrc-files", &parts),
+                            state: "present",
+                            snapshot_schema_id: Some("resources.files.v1"),
+                        })
+                    }
+                }
+            } else {
+                let mut stmt = conn
+                    .prepare(
+                        "SELECT project_id FROM projects ORDER BY created_at ASC, project_id ASC",
+                    )
+                    .map_err(sql_err)?;
+                let pids: Vec<String> = stmt
+                    .query_map([], |r| r.get::<_, String>(0))
+                    .map_err(sql_err)?
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(sql_err)?;
+                drop(stmt);
+                if pids.is_empty() {
+                    return Ok(ResourceVersionOut {
+                        resource: resource.clone(),
+                        revision: digest_revision("rsrc-files", &[]),
+                        state: "present",
+                        snapshot_schema_id: Some("resources.files.v1"),
+                    });
+                }
+                let mut parts = Vec::new();
+                let mut any_resolved = false;
+                for pid in pids {
+                    if let ProjectWorkspace::Dir(ws_dir) =
+                        resolve_project_workspace_dir(store, conn, &pid)?
+                        && let Ok(fp) = fingerprint_workspace_files(&ws_dir)
+                    {
+                        any_resolved = true;
+                        parts.push(pid);
+                        parts.extend(fp);
+                    }
+                }
+                if !any_resolved {
+                    return Ok(unavailable(resource));
+                }
+                Ok(ResourceVersionOut {
+                    resource: resource.clone(),
+                    revision: digest_revision("rsrc-files", &parts),
+                    state: "present",
+                    snapshot_schema_id: Some("resources.files.v1"),
+                })
+            }
+        }
+        "git" => {
+            if let Some(pid) = project_id.or(resource_id).filter(|s| !s.is_empty()) {
+                match resolve_project_workspace_dir(store, conn, pid)? {
+                    ProjectWorkspace::Absent => Ok(absent_resource(resource)),
+                    ProjectWorkspace::Unavailable => Ok(unavailable(resource)),
+                    ProjectWorkspace::Dir(ws_dir) => {
+                        let Some(parts) = git_project_parts(conn, pid, &ws_dir)? else {
+                            return Ok(unavailable(resource));
+                        };
+                        Ok(ResourceVersionOut {
+                            resource: resource.clone(),
+                            revision: digest_revision("rsrc-git", &parts),
+                            state: "present",
+                            snapshot_schema_id: Some("resources.git.v1"),
+                        })
+                    }
+                }
+            } else {
+                let mut stmt = conn
+                    .prepare(
+                        "SELECT project_id FROM projects ORDER BY created_at ASC, project_id ASC",
+                    )
+                    .map_err(sql_err)?;
+                let pids: Vec<String> = stmt
+                    .query_map([], |r| r.get::<_, String>(0))
+                    .map_err(sql_err)?
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(sql_err)?;
+                drop(stmt);
+                let mut parts = Vec::new();
+                let mut any_git = false;
+                for pid in pids {
+                    if let ProjectWorkspace::Dir(ws_dir) =
+                        resolve_project_workspace_dir(store, conn, &pid)?
+                        && let Some(gparts) = git_project_parts(conn, &pid, &ws_dir)?
+                    {
+                        any_git = true;
+                        parts.extend(gparts);
+                    }
+                }
+                if !any_git {
+                    return Ok(unavailable(resource));
+                }
+                Ok(ResourceVersionOut {
+                    resource: resource.clone(),
+                    revision: digest_revision("rsrc-git", &parts),
+                    state: "present",
+                    snapshot_schema_id: Some("resources.git.v1"),
+                })
+            }
+        }
+        "memory" => {
+            if !table_exists(conn, "v1_memory_entries")? {
+                return Ok(unavailable(resource));
+            }
+            if let Some(mid) = resource_id.filter(|s| !s.is_empty()) {
+                let row: Option<(Option<String>, String, String, String, String, i64, i64, String)> = conn
+                    .query_row(
+                        "SELECT project_id, scope_kind, kind, name, revision, deprecated, read_only, updated_at
+                         FROM v1_memory_entries WHERE memory_id = ?1",
+                        params![mid],
+                        |r| {
+                            Ok((
+                                r.get(0)?,
+                                r.get(1)?,
+                                r.get(2)?,
+                                r.get(3)?,
+                                r.get(4)?,
+                                r.get(5)?,
+                                r.get(6)?,
+                                r.get(7)?,
+                            ))
+                        },
+                    )
+                    .optional()
+                    .map_err(sql_err)?;
+                let Some((pid_opt, scope_kind, mkind, name, rev, dep, ro, updated)) = row else {
+                    return Ok(absent_resource(resource));
+                };
+                if let Some(req_pid) = project_id.filter(|s| !s.is_empty())
+                    && (pid_opt.as_deref() != Some(req_pid) || !project_row_exists(conn, req_pid)?)
+                {
+                    return Ok(absent_resource(resource));
+                }
+                let parts = vec![
+                    mid.to_owned(),
+                    pid_opt.unwrap_or_default(),
+                    scope_kind,
+                    mkind,
+                    name,
+                    rev,
+                    dep.to_string(),
+                    ro.to_string(),
+                    updated,
+                ];
+                return Ok(ResourceVersionOut {
+                    resource: resource.clone(),
+                    revision: digest_revision("rsrc-memory", &parts),
+                    state: "present",
+                    snapshot_schema_id: Some("resources.memory.v1"),
+                });
+            }
+
+            let filter = project_id.unwrap_or("");
+            if !filter.is_empty() && !project_row_exists(conn, filter)? {
+                return Ok(absent_resource(resource));
+            }
+            let mut stmt = conn
+                .prepare(
+                    "SELECT memory_id, COALESCE(project_id, ''), revision, deprecated, read_only, updated_at
+                     FROM v1_memory_entries
+                     WHERE (?1 = '' OR project_id = ?1)
+                     ORDER BY created_at ASC, memory_id ASC",
+                )
+                .map_err(sql_err)?;
+            let rows = stmt
+                .query_map(params![filter], |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, String>(2)?,
+                        r.get::<_, i64>(3)?,
+                        r.get::<_, i64>(4)?,
+                        r.get::<_, String>(5)?,
+                    ))
+                })
+                .map_err(sql_err)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(sql_err)?;
+            drop(stmt);
+            let mut parts: Vec<String> = rows
+                .into_iter()
+                .flat_map(|(id, pid, rev, dep, ro, updated)| {
+                    vec![id, pid, rev, dep.to_string(), ro.to_string(), updated]
+                })
+                .collect();
+            if table_exists(conn, "v1_memory_project_meta")? {
+                let mut meta_stmt = conn
+                    .prepare(
+                        "SELECT project_id, status, revision, read_only, updated_at
+                         FROM v1_memory_project_meta
+                         WHERE (?1 = '' OR project_id = ?1)
+                         ORDER BY project_id ASC",
+                    )
+                    .map_err(sql_err)?;
+                let meta_rows = meta_stmt
+                    .query_map(params![filter], |r| {
+                        Ok((
+                            r.get::<_, String>(0)?,
+                            r.get::<_, String>(1)?,
+                            r.get::<_, String>(2)?,
+                            r.get::<_, i64>(3)?,
+                            r.get::<_, String>(4)?,
+                        ))
+                    })
+                    .map_err(sql_err)?
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(sql_err)?;
+                drop(meta_stmt);
+                for (pid, st, rev, ro, updated) in meta_rows {
+                    parts.extend([pid, st, rev, ro.to_string(), updated]);
+                }
+            }
+            if filter.is_empty() && table_exists(conn, "v1_memory_settings")? {
+                let setting: Option<(String, i64, i64, String, String)> = conn
+                    .query_row(
+                        "SELECT reasoning_mode, auto_index_interval_minutes, auto_dream_interval_minutes, revision, updated_at
+                         FROM v1_memory_settings WHERE id = 1",
+                        [],
+                        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+                    )
+                    .optional()
+                    .map_err(sql_err)?;
+                if let Some((mode, idx_m, drm_m, rev, updated)) = setting {
+                    parts.extend([mode, idx_m.to_string(), drm_m.to_string(), rev, updated]);
+                }
+            }
+            Ok(ResourceVersionOut {
+                resource: resource.clone(),
+                revision: digest_revision("rsrc-memory", &parts),
+                state: "present",
+                snapshot_schema_id: Some("resources.memory.v1"),
+            })
+        }
+        "terminal" => {
+            let tid_opt = resource_id.filter(|s| !s.is_empty());
+            let pid_opt = project_id.filter(|s| !s.is_empty());
+            if tid_opt.is_none() && pid_opt.is_none() {
+                return Ok(unavailable(resource));
+            }
+            if !table_exists(conn, "terminals")? {
+                return Ok(unavailable(resource));
+            }
+            let current_epoch = &store.meta().generation;
+            if let Some(tid) = tid_opt {
+                #[allow(clippy::type_complexity)]
+                let row: Option<(
+                    String,
+                    String,
+                    String,
+                    i64,
+                    Option<String>,
+                    i64,
+                    Option<i64>,
+                    Option<String>,
+                    i64,
+                    i64,
+                    String,
+                )> = conn
+                    .query_row(
+                        "SELECT project_id, server_epoch, state, control_epoch, controller_id,
+                                latest_output_offset, exit_code, exit_signal, term_rows, term_columns, updated_at
+                         FROM terminals WHERE terminal_id = ?1",
+                        params![tid],
+                        |r| {
+                            Ok((
+                                r.get(0)?,
+                                r.get(1)?,
+                                r.get(2)?,
+                                r.get(3)?,
+                                r.get(4)?,
+                                r.get(5)?,
+                                r.get(6)?,
+                                r.get(7)?,
+                                r.get(8)?,
+                                r.get(9)?,
+                                r.get(10)?,
+                            ))
+                        },
+                    )
+                    .optional()
+                    .map_err(sql_err)?;
+                let Some((
+                    pid,
+                    srv_epoch,
+                    term_state,
+                    ctrl_epoch,
+                    ctrl_id,
+                    out_off,
+                    exit_code,
+                    exit_signal,
+                    term_rows,
+                    term_columns,
+                    updated_at,
+                )) = row
+                else {
+                    return Ok(absent_resource(resource));
+                };
+                if pid_opt.is_some_and(|p| p != pid) {
+                    return Ok(absent_resource(resource));
+                }
+                let eff_state = if !matches!(term_state.as_str(), "exited" | "lost")
+                    && &srv_epoch != current_epoch
+                {
+                    "lost".to_owned()
+                } else {
+                    term_state
+                };
+                let parts = vec![
+                    tid.to_owned(),
+                    pid,
+                    srv_epoch,
+                    eff_state,
+                    ctrl_epoch.to_string(),
+                    ctrl_id.unwrap_or_default(),
+                    out_off.to_string(),
+                    exit_code.map(|c| c.to_string()).unwrap_or_default(),
+                    exit_signal.unwrap_or_default(),
+                    term_rows.to_string(),
+                    term_columns.to_string(),
+                    updated_at,
+                ];
+                return Ok(ResourceVersionOut {
+                    resource: resource.clone(),
+                    revision: digest_revision("rsrc-terminal", &parts),
+                    state: "present",
+                    snapshot_schema_id: Some("resources.terminal.v1"),
+                });
+            }
+
+            let pid = pid_opt.expect("checked above");
+            if !project_row_exists(conn, pid)? {
+                return Ok(absent_resource(resource));
+            }
+            let mut stmt = conn
+                .prepare(
+                    "SELECT terminal_id, server_epoch, state, control_epoch, controller_id,
+                            latest_output_offset, exit_code, exit_signal, term_rows, term_columns, updated_at
+                     FROM terminals WHERE project_id = ?1
+                     ORDER BY created_at ASC, terminal_id ASC",
+                )
+                .map_err(sql_err)?;
+            let rows = stmt
+                .query_map(params![pid], |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, String>(2)?,
+                        r.get::<_, i64>(3)?,
+                        r.get::<_, Option<String>>(4)?,
+                        r.get::<_, i64>(5)?,
+                        r.get::<_, Option<i64>>(6)?,
+                        r.get::<_, Option<String>>(7)?,
+                        r.get::<_, i64>(8)?,
+                        r.get::<_, i64>(9)?,
+                        r.get::<_, String>(10)?,
+                    ))
+                })
+                .map_err(sql_err)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(sql_err)?;
+            drop(stmt);
+            let mut parts = vec![pid.to_owned()];
+            for (
+                tid,
+                srv_epoch,
+                term_state,
+                ctrl_epoch,
+                ctrl_id,
+                out_off,
+                exit_code,
+                exit_signal,
+                term_rows,
+                term_columns,
+                updated_at,
+            ) in rows
+            {
+                let eff_state = if !matches!(term_state.as_str(), "exited" | "lost")
+                    && &srv_epoch != current_epoch
+                {
+                    "lost".to_owned()
+                } else {
+                    term_state
+                };
+                parts.extend([
+                    tid,
+                    srv_epoch,
+                    eff_state,
+                    ctrl_epoch.to_string(),
+                    ctrl_id.unwrap_or_default(),
+                    out_off.to_string(),
+                    exit_code.map(|c| c.to_string()).unwrap_or_default(),
+                    exit_signal.unwrap_or_default(),
+                    term_rows.to_string(),
+                    term_columns.to_string(),
+                    updated_at,
+                ]);
+            }
+            Ok(ResourceVersionOut {
+                resource: resource.clone(),
+                revision: digest_revision("rsrc-terminal", &parts),
+                state: "present",
+                snapshot_schema_id: Some("resources.terminal.v1"),
+            })
+        }
         _ => Ok(unavailable(resource)),
     }
 }
@@ -2153,6 +2843,226 @@ fn unavailable(resource: &Value) -> ResourceVersionOut {
         state: "unavailable",
         snapshot_schema_id: None,
     }
+}
+
+fn absent_resource(resource: &Value) -> ResourceVersionOut {
+    ResourceVersionOut {
+        resource: resource.clone(),
+        revision: "absent".to_owned(),
+        state: "absent",
+        snapshot_schema_id: None,
+    }
+}
+
+fn project_row_exists(conn: &Connection, project_id: &str) -> Result<bool, ContractError> {
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM projects WHERE project_id = ?1)",
+        params![project_id],
+        |r| r.get(0),
+    )
+    .map_err(sql_err)
+}
+
+enum ProjectWorkspace {
+    Absent,
+    Unavailable,
+    Dir(PathBuf),
+}
+
+fn resolve_project_workspace_dir(
+    store: &V1Store,
+    conn: &Connection,
+    project_id: &str,
+) -> Result<ProjectWorkspace, ContractError> {
+    let root_json: Option<String> = conn
+        .query_row(
+            "SELECT root_json FROM projects WHERE project_id = ?1",
+            params![project_id],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(sql_err)?;
+    let Some(raw) = root_json else {
+        return Ok(ProjectWorkspace::Absent);
+    };
+    let Ok(root_val) = serde_json::from_str::<Value>(&raw) else {
+        return Ok(ProjectWorkspace::Unavailable);
+    };
+    let Some(root_id) = root_val
+        .get("rootId")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+    else {
+        return Ok(ProjectWorkspace::Unavailable);
+    };
+    let Ok(auth_root) = store.resolve_authorized_root(root_id) else {
+        return Ok(ProjectWorkspace::Unavailable);
+    };
+    let Ok(canonical_root) = std::fs::canonicalize(&auth_root) else {
+        return Ok(ProjectWorkspace::Unavailable);
+    };
+    let rel = root_val
+        .get("relativePath")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let Ok(components) = relative_components(Path::new(rel)) else {
+        return Ok(ProjectWorkspace::Unavailable);
+    };
+    let mut cur = canonical_root.clone();
+    for comp in components {
+        cur.push(comp);
+        let Ok(verified) = std::fs::canonicalize(&cur) else {
+            return Ok(ProjectWorkspace::Unavailable);
+        };
+        if verified.strip_prefix(&canonical_root).is_err() {
+            return Ok(ProjectWorkspace::Unavailable);
+        }
+        cur = verified;
+    }
+    if !cur.is_dir() {
+        return Ok(ProjectWorkspace::Unavailable);
+    }
+    Ok(ProjectWorkspace::Dir(cur))
+}
+
+fn fingerprint_workspace_files(ws_dir: &Path) -> std::io::Result<Vec<String>> {
+    use std::io::Read as _;
+
+    const MAX_ENTRIES: usize = 5_000;
+    const MAX_FILE_HASH_BYTES: u64 = 64 * 1024;
+    const MAX_TOTAL_HASH_BYTES: usize = 4 * 1024 * 1024;
+
+    let mut parts = Vec::new();
+    let mut stack: Vec<(PathBuf, String)> = vec![(ws_dir.to_path_buf(), String::new())];
+    let mut seen_entries = 0usize;
+    let mut hashed_bytes = 0usize;
+
+    while let Some((dir, prefix)) = stack.pop() {
+        let mut children: Vec<(String, PathBuf)> = Vec::new();
+        for entry_res in std::fs::read_dir(&dir)? {
+            let entry = entry_res?;
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name == ".git" {
+                continue;
+            }
+            children.push((name, entry.path()));
+        }
+        children.sort_by(|a, b| a.0.cmp(&b.0));
+
+        // Process in ascending lexicographical order by pushing in reverse.
+        let mut subdirs = Vec::new();
+        for (name, path) in children {
+            if seen_entries >= MAX_ENTRIES {
+                break;
+            }
+            seen_entries += 1;
+            let rel = if prefix.is_empty() {
+                name
+            } else {
+                format!("{prefix}/{name}")
+            };
+            let meta = std::fs::symlink_metadata(&path)?;
+            let ft = meta.file_type();
+            if ft.is_symlink() {
+                let target = std::fs::read_link(&path)
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                parts.push(format!("l:{rel}:{target}"));
+            } else if ft.is_dir() {
+                parts.push(format!("d:{rel}"));
+                subdirs.push((path, rel));
+            } else {
+                let mtime_ns = meta
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_nanos())
+                    .unwrap_or(0);
+                let len = meta.len();
+                let mut content_digest = String::new();
+                if len <= MAX_FILE_HASH_BYTES && hashed_bytes < MAX_TOTAL_HASH_BYTES {
+                    let mut buf = Vec::new();
+                    if let Ok(mut f) = std::fs::File::open(&path)
+                        && f.read_to_end(&mut buf).is_ok()
+                    {
+                        hashed_bytes = hashed_bytes.saturating_add(buf.len());
+                        content_digest = format!("{:x}", Sha256::digest(&buf));
+                    }
+                }
+                parts.push(format!("f:{rel}:{len}:{mtime_ns}:{content_digest}"));
+            }
+        }
+        for sub in subdirs.into_iter().rev() {
+            stack.push(sub);
+        }
+        if seen_entries >= MAX_ENTRIES {
+            parts.push("truncated:1".to_owned());
+            break;
+        }
+    }
+    Ok(parts)
+}
+
+fn run_git(ws: &Path, args: &[&str]) -> Option<String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(ws)
+        .arg("--no-optional-locks")
+        .args(args)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("LC_ALL", "C")
+        .stdin(Stdio::null())
+        .output()
+        .ok()?;
+    if output.status.success() {
+        Some(String::from_utf8_lossy(&output.stdout).into_owned())
+    } else {
+        None
+    }
+}
+
+fn git_project_parts(
+    conn: &Connection,
+    project_id: &str,
+    ws_dir: &Path,
+) -> Result<Option<Vec<String>>, ContractError> {
+    let is_tree = run_git(ws_dir, &["rev-parse", "--is-inside-work-tree"])
+        .map(|s| s.trim() == "true")
+        .unwrap_or(false);
+    if !is_tree {
+        return Ok(None);
+    }
+    let head_oid = run_git(ws_dir, &["rev-parse", "--verify", "HEAD"]).unwrap_or_default();
+    let head_ref = run_git(ws_dir, &["symbolic-ref", "-q", "HEAD"]).unwrap_or_default();
+    let refs = run_git(ws_dir, &["show-ref"]).unwrap_or_default();
+    let status = run_git(ws_dir, &["status", "--porcelain=v1", "-z", "-uall"]).unwrap_or_default();
+    let mut parts = vec![project_id.to_owned(), head_oid, head_ref, refs, status];
+    if table_exists(conn, "git_operations")? {
+        let mut stmt = conn
+            .prepare(
+                "SELECT operation_id, state, revision, updated_at
+                 FROM git_operations WHERE project_id = ?1
+                 ORDER BY created_at ASC, operation_id ASC",
+            )
+            .map_err(sql_err)?;
+        let rows = stmt
+            .query_map(params![project_id], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                ))
+            })
+            .map_err(sql_err)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(sql_err)?;
+        drop(stmt);
+        for (op_id, state, rev, updated) in rows {
+            parts.extend([op_id, state, rev, updated]);
+        }
+    }
+    Ok(Some(parts))
 }
 
 // ---------------------------------------------------------------------------
@@ -2182,110 +3092,109 @@ async fn system_resources(
     }
 
     let limit = page_limit(input.get("page"))?;
-    let store = rt.store();
-    let conn = store.conn.lock().expect("sqlite mutex");
-    let mut stmt = conn
-        .prepare(
-            "SELECT session_id, active_run_id, revision, session_state, queue_revision
-             FROM sessions WHERE session_state != 'deleted'
-             ORDER BY created_at ASC, session_id ASC",
-        )
-        .map_err(sql_err)?;
-    let rows = stmt
-        .query_map([], |r| {
-            Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, Option<String>>(1)?,
-                r.get::<_, String>(2)?,
-                r.get::<_, String>(3)?,
-                r.get::<_, String>(4)?,
-            ))
-        })
-        .map_err(sql_err)?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(sql_err)?;
-    drop(stmt);
-
-    let items: Vec<Value> = rows
-        .iter()
-        .map(|(session_id, active, revision, state, queue_revision)| {
-            json!({
-                "resourceId": session_id,
-                "kind": "session",
-                "ownerRunId": active,
-                "revision": digest_revision("sysres", &[revision.clone(), queue_revision.clone()]),
-                "resourceStatus": state,
-            })
-        })
-        .collect();
-    let digest = digest_revision(
-        "sysres",
-        &rows
-            .iter()
-            .flat_map(|(id, active, revision, state, qrev)| {
-                vec![
-                    id.clone(),
-                    active.clone().unwrap_or_default(),
-                    revision.clone(),
-                    state.clone(),
-                    qrev.clone(),
-                ]
-            })
-            .collect::<Vec<_>>(),
-    );
-
-    let offset = match input
+    let cursor = input
         .get("page")
         .and_then(|p| p.get("cursor"))
         .and_then(Value::as_str)
-    {
-        None => 0usize,
-        Some(raw) => match parse_view_cursor(raw) {
-            Some((pinned, off)) => {
-                if pinned != digest {
+        .map(ToOwned::to_owned);
+    let store = rt.store().clone();
+    let result = run_blocking(move || {
+        let conn = store.conn.lock().expect("sqlite mutex");
+        let mut stmt = conn
+            .prepare(
+                "SELECT session_id, active_run_id, revision, session_state, queue_revision
+                 FROM sessions WHERE session_state != 'deleted'
+                 ORDER BY created_at ASC, session_id ASC",
+            )
+            .map_err(sql_err)?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, Option<String>>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, String>(4)?,
+                ))
+            })
+            .map_err(sql_err)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(sql_err)?;
+        drop(stmt);
+
+        let items: Vec<Value> = rows
+            .iter()
+            .map(|(session_id, active, revision, state, queue_revision)| {
+                json!({
+                    "resourceId": session_id,
+                    "kind": "session",
+                    "ownerRunId": active,
+                    "revision": digest_revision("sysres", &[revision.clone(), queue_revision.clone()]),
+                    "resourceStatus": state,
+                })
+            })
+            .collect();
+        let digest = digest_revision(
+            "sysres",
+            &rows
+                .iter()
+                .flat_map(|(id, active, revision, state, qrev)| {
+                    vec![
+                        id.clone(),
+                        active.clone().unwrap_or_default(),
+                        revision.clone(),
+                        state.clone(),
+                        qrev.clone(),
+                    ]
+                })
+                .collect::<Vec<_>>(),
+        );
+
+        let offset = match cursor.as_deref() {
+            None => 0usize,
+            Some(raw) => match parse_view_cursor(raw) {
+                Some((pinned, off)) => {
+                    if pinned != digest {
+                        return Err(ContractError::new(
+                            CODE_SNAPSHOT_CHANGED,
+                            "the managed resource listing changed while paging; restart the query",
+                            RetrySpec::after_reconcile(),
+                            EffectStatus::NotApplied,
+                        ));
+                    }
+                    off
+                }
+                None => {
                     return Err(ContractError::new(
-                        CODE_SNAPSHOT_CHANGED,
-                        "the managed resource listing changed while paging; restart the query",
+                        CODE_CURSOR_EXPIRED,
+                        format!("invalid pagination cursor `{raw}`"),
                         RetrySpec::after_reconcile(),
                         EffectStatus::NotApplied,
-                    )
-                    .into());
+                    ));
                 }
-                off
-            }
-            None => {
-                return Err(ContractError::new(
-                    CODE_CURSOR_EXPIRED,
-                    format!("invalid pagination cursor `{raw}`"),
-                    RetrySpec::after_reconcile(),
-                    EffectStatus::NotApplied,
-                )
-                .into());
-            }
-        },
-    };
-    if offset > items.len() {
-        return Err(ContractError::new(
-            CODE_CURSOR_EXPIRED,
-            "pagination cursor beyond the end of the listing",
-            RetrySpec::after_reconcile(),
-            EffectStatus::NotApplied,
-        )
-        .into());
-    }
-    let end = (offset + limit).min(items.len());
-    let complete = end >= items.len();
-    Ok((
-        ResponseOutcome::Succeeded,
-        json!({
+            },
+        };
+        if offset > items.len() {
+            return Err(ContractError::new(
+                CODE_CURSOR_EXPIRED,
+                "pagination cursor beyond the end of the listing",
+                RetrySpec::after_reconcile(),
+                EffectStatus::NotApplied,
+            ));
+        }
+        let end = (offset + limit).min(items.len());
+        let complete = end >= items.len();
+        Ok(json!({
             "items": items[offset..end],
             "pageInfo": {
                 "snapshotRevision": digest,
                 "nextCursor": if complete { Value::Null } else { json!(view_cursor(&digest, end)) },
                 "complete": complete,
             }
-        }),
-    ))
+        }))
+    })
+    .await?;
+    Ok((ResponseOutcome::Succeeded, result))
 }
 
 /// One redacted diagnostic (contract `$defs.Diagnostic`).
@@ -2313,188 +3222,187 @@ async fn system_diagnostics(
         None => None,
     };
     let limit = page_limit(input.get("page"))?;
-    let store = rt.store();
-    let conn = store.conn.lock().expect("sqlite mutex");
-
-    // Crash-recovered runs: interrupted (warning) / result_unknown (error).
-    let mut stmt = conn
-        .prepare(
-            "SELECT run_id, state, updated_at FROM runs
-             WHERE state IN ('interrupted', 'result_unknown')
-             ORDER BY updated_at ASC, run_id ASC",
-        )
-        .map_err(sql_err)?;
-    let run_rows = stmt
-        .query_map([], |r| {
-            Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, String>(2)?,
-            ))
-        })
-        .map_err(sql_err)?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(sql_err)?;
-    drop(stmt);
-
-    // Paused session queues (info).
-    let mut stmt = conn
-        .prepare(
-            "SELECT session_id, pause_reason FROM sessions
-             WHERE queue_paused = 1 AND session_state != 'deleted'
-             ORDER BY session_id ASC",
-        )
-        .map_err(sql_err)?;
-    let paused_rows = stmt
-        .query_map([], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?))
-        })
-        .map_err(sql_err)?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(sql_err)?;
-    drop(stmt);
-
-    // Store-reconciliation diagnostics (legacy registry warnings).
-    let stored = store.diagnostics();
-
-    let mut items: Vec<DiagnosticItem> = Vec::new();
-    for (run_id, state, updated_at) in run_rows {
-        items.push(DiagnosticItem {
-            code: if state == "result_unknown" {
-                "RUN_RESULT_UNKNOWN".to_owned()
-            } else {
-                "RUN_INTERRUPTED".to_owned()
-            },
-            severity: if state == "result_unknown" {
-                "error"
-            } else {
-                "warning"
-            },
-            // No run input / result bodies ever enter diagnostics — ids and
-            // state names only (the "错误token与正文不出现在诊断" anchor).
-            message: format!("run `{run_id}` is `{state}` after gateway recovery"),
-            resource_id: Some(run_id),
-            occurred_at: Some(updated_at),
-        });
-    }
-    for (session_id, pause_reason) in paused_rows {
-        items.push(DiagnosticItem {
-            code: "SESSION_QUEUE_PAUSED".to_owned(),
-            severity: "info",
-            message: format!(
-                "session `{session_id}` queue is paused (`{}`)",
-                pause_reason.as_deref().unwrap_or("unspecified")
-            ),
-            resource_id: Some(session_id),
-            occurred_at: None,
-        });
-    }
-    for diag in stored {
-        let severity = match diag.severity.as_str() {
-            "info" => "info",
-            "error" => "error",
-            _ => "warning",
-        };
-        items.push(DiagnosticItem {
-            code: diag.code,
-            severity,
-            message: diag.message,
-            resource_id: diag.resource_id,
-            occurred_at: None,
-        });
-    }
-    // Deterministic order before the `since` filter and pagination.
-    items.sort_by(|a, b| (&a.code, &a.resource_id).cmp(&(&b.code, &b.resource_id)));
-    if let Some(since_ts) = since_ts {
-        items.retain(|item| {
-            // Point-in-time diagnostics filter by their state-change
-            // timestamp; current-condition diagnostics (no per-item origin)
-            // always report — an ongoing condition is true after any
-            // `since` that has already passed.
-            item.occurred_at
-                .as_deref()
-                .is_none_or(|at| at >= since_ts.as_str())
-        });
-    }
-
-    let digest = digest_revision(
-        "sysdiag",
-        &items
-            .iter()
-            .map(|item| {
-                format!(
-                    "{}|{}|{}|{}",
-                    item.code,
-                    item.severity,
-                    item.resource_id.clone().unwrap_or_default(),
-                    item.message
-                )
-            })
-            .collect::<Vec<_>>(),
-    );
-    let offset = match input
+    let cursor = input
         .get("page")
         .and_then(|p| p.get("cursor"))
         .and_then(Value::as_str)
-    {
-        None => 0usize,
-        Some(raw) => match parse_view_cursor(raw) {
-            Some((pinned, off)) => {
-                if pinned != digest {
+        .map(ToOwned::to_owned);
+    let store = rt.store().clone();
+    let result = run_blocking(move || {
+        let conn = store.conn.lock().expect("sqlite mutex");
+
+        // Crash-recovered runs: interrupted (warning) / result_unknown (error).
+        let mut stmt = conn
+            .prepare(
+                "SELECT run_id, state, updated_at FROM runs
+                 WHERE state IN ('interrupted', 'result_unknown')
+                 ORDER BY updated_at ASC, run_id ASC",
+            )
+            .map_err(sql_err)?;
+        let run_rows = stmt
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
+            })
+            .map_err(sql_err)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(sql_err)?;
+        drop(stmt);
+
+        // Paused session queues (info).
+        let mut stmt = conn
+            .prepare(
+                "SELECT session_id, pause_reason FROM sessions
+                 WHERE queue_paused = 1 AND session_state != 'deleted'
+                 ORDER BY session_id ASC",
+            )
+            .map_err(sql_err)?;
+        let paused_rows = stmt
+            .query_map([], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?))
+            })
+            .map_err(sql_err)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(sql_err)?;
+        drop(stmt);
+
+        // Store-reconciliation diagnostics (legacy registry warnings).
+        let stored = store.diagnostics();
+
+        let mut items: Vec<DiagnosticItem> = Vec::new();
+        for (run_id, state, updated_at) in run_rows {
+            items.push(DiagnosticItem {
+                code: if state == "result_unknown" {
+                    "RUN_RESULT_UNKNOWN".to_owned()
+                } else {
+                    "RUN_INTERRUPTED".to_owned()
+                },
+                severity: if state == "result_unknown" {
+                    "error"
+                } else {
+                    "warning"
+                },
+                // No run input / result bodies ever enter diagnostics — ids and
+                // state names only (the "错误token与正文不出现在诊断" anchor).
+                message: format!("run `{run_id}` is `{state}` after gateway recovery"),
+                resource_id: Some(run_id),
+                occurred_at: Some(updated_at),
+            });
+        }
+        for (session_id, pause_reason) in paused_rows {
+            items.push(DiagnosticItem {
+                code: "SESSION_QUEUE_PAUSED".to_owned(),
+                severity: "info",
+                message: format!(
+                    "session `{session_id}` queue is paused (`{}`)",
+                    pause_reason.as_deref().unwrap_or("unspecified")
+                ),
+                resource_id: Some(session_id),
+                occurred_at: None,
+            });
+        }
+        for diag in stored {
+            let severity = match diag.severity.as_str() {
+                "info" => "info",
+                "error" => "error",
+                _ => "warning",
+            };
+            items.push(DiagnosticItem {
+                code: diag.code,
+                severity,
+                message: diag.message,
+                resource_id: diag.resource_id,
+                occurred_at: None,
+            });
+        }
+        // Deterministic order before the `since` filter and pagination.
+        items.sort_by(|a, b| (&a.code, &a.resource_id).cmp(&(&b.code, &b.resource_id)));
+        if let Some(since_ts) = since_ts {
+            items.retain(|item| {
+                // Point-in-time diagnostics filter by their state-change
+                // timestamp; current-condition diagnostics (no per-item origin)
+                // always report — an ongoing condition is true after any
+                // `since` that has already passed.
+                item.occurred_at
+                    .as_deref()
+                    .is_none_or(|at| at >= since_ts.as_str())
+            });
+        }
+
+        let digest = digest_revision(
+            "sysdiag",
+            &items
+                .iter()
+                .map(|item| {
+                    format!(
+                        "{}|{}|{}|{}",
+                        item.code,
+                        item.severity,
+                        item.resource_id.clone().unwrap_or_default(),
+                        item.message
+                    )
+                })
+                .collect::<Vec<_>>(),
+        );
+        let offset = match cursor.as_deref() {
+            None => 0usize,
+            Some(raw) => match parse_view_cursor(raw) {
+                Some((pinned, off)) => {
+                    if pinned != digest {
+                        return Err(ContractError::new(
+                            CODE_SNAPSHOT_CHANGED,
+                            "the diagnostics listing changed while paging; restart the query",
+                            RetrySpec::after_reconcile(),
+                            EffectStatus::NotApplied,
+                        ));
+                    }
+                    off
+                }
+                None => {
                     return Err(ContractError::new(
-                        CODE_SNAPSHOT_CHANGED,
-                        "the diagnostics listing changed while paging; restart the query",
+                        CODE_CURSOR_EXPIRED,
+                        format!("invalid pagination cursor `{raw}`"),
                         RetrySpec::after_reconcile(),
                         EffectStatus::NotApplied,
-                    )
-                    .into());
+                    ));
                 }
-                off
-            }
-            None => {
-                return Err(ContractError::new(
-                    CODE_CURSOR_EXPIRED,
-                    format!("invalid pagination cursor `{raw}`"),
-                    RetrySpec::after_reconcile(),
-                    EffectStatus::NotApplied,
-                )
-                .into());
-            }
-        },
-    };
-    if offset > items.len() {
-        return Err(ContractError::new(
-            CODE_CURSOR_EXPIRED,
-            "pagination cursor beyond the end of the listing",
-            RetrySpec::after_reconcile(),
-            EffectStatus::NotApplied,
-        )
-        .into());
-    }
-    let end = (offset + limit).min(items.len());
-    let complete = end >= items.len();
-    let page_items: Vec<Value> = items[offset..end]
-        .iter()
-        .map(|item| {
-            json!({
-                "code": item.code,
-                "severity": item.severity,
-                "message": item.message,
-                "resourceId": item.resource_id,
+            },
+        };
+        if offset > items.len() {
+            return Err(ContractError::new(
+                CODE_CURSOR_EXPIRED,
+                "pagination cursor beyond the end of the listing",
+                RetrySpec::after_reconcile(),
+                EffectStatus::NotApplied,
+            ));
+        }
+        let end = (offset + limit).min(items.len());
+        let complete = end >= items.len();
+        let page_items: Vec<Value> = items[offset..end]
+            .iter()
+            .map(|item| {
+                json!({
+                    "code": item.code,
+                    "severity": item.severity,
+                    "message": item.message,
+                    "resourceId": item.resource_id,
+                })
             })
-        })
-        .collect();
-    Ok((
-        ResponseOutcome::Succeeded,
-        json!({
+            .collect();
+        Ok(json!({
             "items": page_items,
             "pageInfo": {
                 "snapshotRevision": digest,
                 "nextCursor": if complete { Value::Null } else { json!(view_cursor(&digest, end)) },
                 "complete": complete,
             }
-        }),
-    ))
+        }))
+    })
+    .await?;
+    Ok((ResponseOutcome::Succeeded, result))
 }
 
 // ---------------------------------------------------------------------------
@@ -3356,5 +4264,336 @@ mod tests {
             DispatchError::Application(err) => assert_eq!(err.code, CODE_CANCELLATION_UNSUPPORTED),
             other => panic!("expected CANCELLATION_UNSUPPORTED, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn operations_events_stream_source_and_follow_rejection() {
+        let (_home, rt, iid) = fresh_runtime("op-stream");
+        let store = rt.store();
+        let (op_id, _) = store
+            .begin_long_operation("instance.maintenance", &json!({"kind": "instance"}), true)
+            .unwrap();
+        store.mark_operation_running(&op_id).unwrap();
+
+        // Unary dispatch with follow=true must reject with INVALID_ARGUMENT.
+        let err = rt
+            .dispatch(
+                "operations.events",
+                json!({"instanceId": iid, "operationId": op_id, "follow": true}),
+                None,
+                None,
+            )
+            .await
+            .unwrap_err();
+        match err {
+            DispatchError::Application(e) => assert_eq!(e.code, CODE_INVALID_ARGUMENT),
+            other => panic!("expected INVALID_ARGUMENT, got {other:?}"),
+        }
+
+        // StreamSource (`sub.open` backend) streams initial frames cleanly.
+        let state = Arc::new(PublicV1State::new(rt.clone(), "tok-op-stream".to_owned()));
+        let mut src = operations_events_source(&state, &json!({"operationId": op_id}), "sub-op-1")
+            .expect("operations_events_source open");
+        let batch1 = src.fetch_next(16).expect("first stream fetch");
+        assert!(!batch1.stream_ended);
+        assert_eq!(batch1.frames.len(), 2);
+        let frame0: Value = serde_json::from_str(&batch1.frames[0].text).unwrap();
+        assert_eq!(frame0["params"]["event"]["operationId"], op_id);
+        assert_eq!(frame0["params"]["event"]["eventType"], "operation.queued");
+
+        // Completing the operation delivers the final frame + stream_ended=true.
+        store
+            .finish_long_operation(
+                &op_id,
+                LongOperationOutcome::Succeeded {
+                    result: json!({"ok": true}),
+                    result_schema_id: None,
+                },
+            )
+            .unwrap();
+        let batch2 = src.fetch_next(16).expect("second stream fetch");
+        assert!(batch2.stream_ended);
+        assert_eq!(batch2.frames.len(), 1);
+        let frame_end: Value = serde_json::from_str(&batch2.frames[0].text).unwrap();
+        assert_eq!(
+            frame_end["params"]["event"]["eventType"],
+            "operation.completed"
+        );
+
+        // Failed v1_domain_operations row projects `error` accurately.
+        {
+            let conn = store.conn.lock().expect("sqlite mutex");
+            conn.execute(
+                "INSERT INTO v1_domain_operations
+                    (operation_id, method_id, idempotency_key, input_digest, state, receipt_json, completion_json, rejection_code, created_at, updated_at)
+                 VALUES ('op-dom-fail', 'background_tasks.stop', NULL, 'd', 'failed', '{}', '{\"code\":\"UNAVAILABLE\",\"message\":\"stop failed\"}', NULL, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+                [],
+            )
+            .unwrap();
+        }
+        let (_, dom_got) = rt
+            .dispatch(
+                "operations.get",
+                json!({"instanceId": iid, "operationId": "op-dom-fail"}),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(dom_got["operation"]["state"], "failed");
+        assert_eq!(dom_got["operation"]["error"]["code"], "UNAVAILABLE");
+        assert_eq!(dom_got["operation"]["error"]["message"], "stop failed");
+    }
+
+    #[tokio::test]
+    async fn operations_snapshot_publishes_real_artifact_and_safe_checkpoint_cursor() {
+        use base64::Engine as _;
+
+        let (_home, rt, iid) = fresh_runtime("op-snap-art");
+        let store = rt.store();
+        let (op_id, _) = store
+            .begin_long_operation("instance.maintenance", &json!({"kind": "instance"}), true)
+            .unwrap();
+
+        let (_, snap) = rt
+            .dispatch(
+                "operations.snapshot",
+                json!({"instanceId": iid, "operationId": op_id}),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        OperationRegistry::global()
+            .validate_result("operations.snapshot", &snap)
+            .unwrap();
+        let artifact_id = snap["snapshot"]["sections"][0]["artifactId"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let sha = snap["snapshot"]["sections"][0]["sha256"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+
+        let (_, art_meta) = rt
+            .dispatch(
+                "artifacts.get",
+                json!({"artifactId": artifact_id}),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(art_meta["artifact"]["sha256"], sha);
+
+        let (_, art_read) = rt
+            .dispatch(
+                "artifacts.read",
+                json!({"artifactId": artifact_id, "offset": 0, "maxBytes": 65536}),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(art_read["chunk"]["bytesBase64"].as_str().unwrap())
+            .unwrap();
+        let parsed: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(parsed["operationId"], op_id);
+
+        // Repeat snapshot of identical state reuses the same artifactId.
+        let (_, snap2) = rt
+            .dispatch(
+                "operations.snapshot",
+                json!({"instanceId": iid, "operationId": op_id}),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(snap2["snapshot"]["sections"][0]["artifactId"], artifact_id);
+
+        // When retention advances (`earliest_cursor_seq > 1`) and an operation has
+        // zero events yet (e.g. a domain op), snapshot checkpoint cursor does NOT
+        // trap `operations.events(afterCursor: ...)` in a `cursor_expired` loop.
+        {
+            let conn = store.conn.lock().expect("sqlite mutex");
+            conn.execute(
+                "INSERT INTO v1_domain_operations
+                    (operation_id, method_id, idempotency_key, input_digest, state, receipt_json, completion_json, rejection_code, created_at, updated_at)
+                 VALUES ('op-no-ev', 'background_tasks.stop', NULL, 'd2', 'queued', '{}', NULL, NULL, '2026-01-01T00:00:01Z', '2026-01-01T00:00:01Z')",
+                [],
+            )
+            .unwrap();
+        }
+        store.set_earliest_cursor_seq_for_test(50).unwrap();
+        let (_, snap_gap) = rt
+            .dispatch(
+                "operations.snapshot",
+                json!({"instanceId": iid, "operationId": "op-no-ev"}),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let ck_cursor = snap_gap["snapshot"]["checkpoint"]["cursor"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let (_, ev_page) = rt
+            .dispatch(
+                "operations.events",
+                json!({"instanceId": iid, "operationId": "op-no-ev", "afterCursor": ck_cursor}),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert!(
+            ev_page["frame"].get("events").is_some(),
+            "checkpoint cursor must resume cleanly without cursor_expired loop: {ev_page}"
+        );
+    }
+
+    #[tokio::test]
+    async fn resources_snapshot_resolves_uploads_files_git_memory_and_targeted_terminal() {
+        let (tmp, rt, iid) = fresh_runtime("rsrc-kinds-13");
+        let root_dir = tmp.0.join("pd-home");
+        let store = rt.store();
+
+        // Create a real workspace-backed project (`rootId: "default"`).
+        let (_, created_proj) = rt
+            .dispatch(
+                "project.create",
+                json!({
+                    "instanceId": iid,
+                    "projectId": "proj-real",
+                    "parent": {"instanceId": iid, "rootId": "default", "relativePath": ""},
+                    "directoryName": "repo-ws",
+                    "name": "Real",
+                }),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let _proj_rev = created_proj["project"]["revision"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let ws = root_dir.join("workspaces").join("repo-ws");
+        std::fs::write(ws.join("hello.txt"), b"v1").unwrap();
+
+        // Initialize a git repository inside ws and create an initial commit.
+        let run_git_cmd = |args: &[&str]| {
+            let status = std::process::Command::new("git")
+                .arg("-C")
+                .arg(&ws)
+                .args(args)
+                .env("GIT_AUTHOR_NAME", "Tester")
+                .env("GIT_AUTHOR_EMAIL", "tester@example.com")
+                .env("GIT_COMMITTER_NAME", "Tester")
+                .env("GIT_COMMITTER_EMAIL", "tester@example.com")
+                .status()
+                .expect("git command");
+            assert!(status.success(), "git {args:?} failed");
+        };
+        run_git_cmd(&["init"]);
+        run_git_cmd(&["add", "hello.txt"]);
+        run_git_cmd(&["commit", "-m", "init"]);
+
+        // Seed uploads, memory, and terminals rows.
+        {
+            let conn = store.conn.lock().expect("sqlite mutex");
+            conn.execute(
+                "INSERT INTO uploads (upload_id, project_id, state, byte_length, part_size, total_sha256, media_type, display_name, artifact_id, revision, expires_at, created_at, updated_at)
+                 VALUES ('up-1', 'proj-real', 'open', 10, 10, 'abc', 'text/plain', 'a.txt', NULL, 'rev-up-1', '2099-01-01T00:00:00Z', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO v1_memory_entries (memory_id, scope_kind, project_id, session_id, kind, name, description, fields_json, revision, deprecated, read_only, content_artifact_id, created_at, updated_at)
+                 VALUES ('mem-1', 'project', 'proj-real', NULL, 'note', 'k1', 'desc', '{}', 'mrev-1', 0, 0, NULL, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO terminals (terminal_id, project_id, working_directory, shell_profile_id, server_epoch, state, control_epoch, controller_id, lease_token_hash, lease_expires_ms, last_accepted_input_seq, last_input_digest, output_epoch, earliest_output_offset, latest_output_offset, exit_code, exit_signal, term_rows, term_columns, created_at, updated_at)
+                 VALUES ('term-1', 'proj-real', NULL, NULL, 'gen-test-1', 'running', 1, 'ctrl-1', NULL, NULL, 0, NULL, 'oe-1', 0, 10, NULL, NULL, 24, 80, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+                [],
+            )
+            .unwrap();
+        }
+
+        let input = json!({
+            "resources": [
+                {"kind": "uploads"},
+                {"kind": "files", "projectId": "proj-real"},
+                {"kind": "git", "projectId": "proj-real"},
+                {"kind": "memory", "projectId": "proj-real"},
+                {"kind": "terminal", "resourceId": "term-1"},
+                {"kind": "terminal"},
+            ]
+        });
+        let (_, snap1) = rt
+            .dispatch("resources.snapshot", input.clone(), None, None)
+            .await
+            .unwrap();
+        OperationRegistry::global()
+            .validate_result("resources.snapshot", &snap1)
+            .unwrap();
+        let s1 = snap1["snapshots"].as_array().unwrap();
+        assert_eq!(s1[0]["state"], "present");
+        assert_eq!(s1[1]["state"], "present");
+        assert_eq!(s1[1]["snapshotSchemaId"], "resources.files.v1");
+        assert_eq!(s1[2]["state"], "present");
+        assert_eq!(s1[2]["snapshotSchemaId"], "resources.git.v1");
+        assert_eq!(s1[3]["state"], "present");
+        assert_eq!(s1[3]["snapshotSchemaId"], "resources.memory.v1");
+        assert_eq!(s1[4]["state"], "present");
+        assert_eq!(s1[4]["snapshotSchemaId"], "resources.terminal.v1");
+        assert_eq!(s1[5]["state"], "unavailable");
+
+        // Mutate workspace file, git working tree, memory row, upload row, and
+        // terminal row: every corresponding revision must move!
+        let rev_uploads_1 = s1[0]["revision"].as_str().unwrap().to_owned();
+        let rev_files_1 = s1[1]["revision"].as_str().unwrap().to_owned();
+        let rev_git_1 = s1[2]["revision"].as_str().unwrap().to_owned();
+        let rev_mem_1 = s1[3]["revision"].as_str().unwrap().to_owned();
+        let rev_term_1 = s1[4]["revision"].as_str().unwrap().to_owned();
+
+        // Check omitted `projectId` uploads (`up-1` actually included vs empty).
+        {
+            let conn = store.conn.lock().expect("sqlite mutex");
+            conn.execute(
+                "INSERT INTO uploads (upload_id, project_id, state, byte_length, part_size, total_sha256, media_type, display_name, artifact_id, revision, expires_at, created_at, updated_at)
+                 VALUES ('up-2', 'proj-real', 'open', 5, 5, 'def', 'text/plain', 'b.txt', NULL, 'rev-up-2', '2099-01-01T00:00:00Z', '2026-01-01T00:00:01Z', '2026-01-01T00:00:01Z')",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "UPDATE v1_memory_entries SET revision = 'mrev-2', updated_at = '2026-01-01T00:00:02Z' WHERE memory_id = 'mem-1'",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "UPDATE terminals SET latest_output_offset = 42, updated_at = '2026-01-01T00:00:03Z' WHERE terminal_id = 'term-1'",
+                [],
+            )
+            .unwrap();
+        }
+        std::fs::write(ws.join("hello.txt"), b"v2-modified").unwrap();
+
+        let (_, snap2) = rt
+            .dispatch("resources.snapshot", input, None, None)
+            .await
+            .unwrap();
+        let s2 = snap2["snapshots"].as_array().unwrap();
+        assert_ne!(s2[0]["revision"], rev_uploads_1);
+        assert_ne!(s2[1]["revision"], rev_files_1);
+        assert_ne!(s2[2]["revision"], rev_git_1);
+        assert_ne!(s2[3]["revision"], rev_mem_1);
+        assert_ne!(s2[4]["revision"], rev_term_1);
     }
 }

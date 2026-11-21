@@ -506,3 +506,389 @@ async fn run_continue_after_gateway_crash() {
     );
     assert_eq!(code, "REVISION_CONFLICT");
 }
+
+// ===========================================================================
+// T06 regression coverage: #7 CAPABILITY_UNAVAILABLE, #8 withdrawn/terminal
+// steer guards, #16 run.continue after project.remove
+// ===========================================================================
+
+fn await_cli_offline_disabled(home: &Path, args: &[&str]) -> CliOutcome {
+    let mut cmd = std::process::Command::new(BIN);
+    cmd.env("AGENTCPM_PD_HOME", home);
+    cmd.env("AGENTCPM_PD_ENABLE_OFFLINE_DIRECTIVES", "0");
+    cmd.stdin(std::process::Stdio::null());
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::piped());
+    cmd.args(args);
+    let output = cmd.output().expect("spawn agentcpm-pd");
+    CliOutcome {
+        code: output.status.code().unwrap_or(-1),
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+    }
+}
+
+#[tokio::test]
+async fn offline_directives_disabled_refuses_steer_and_promote_with_capability_unavailable() {
+    let home = TestHome::new("t009-cap");
+    let root = home.path();
+
+    expect_ok(
+        "instance.initialize",
+        &await_cli_offline_disabled(root, &["instance", "init", "--output", "json"]),
+    );
+    let local_raw = std::fs::read_to_string(root.join("local.json")).expect("local.json");
+    let local_val: Value = serde_json::from_str(&local_raw).expect("parse local.json");
+    let instance_id = local_val["instanceId"].as_str().unwrap().to_owned();
+
+    let (project_id, session_id) = ("p-cap", "s-cap");
+    expect_ok(
+        "project.register",
+        &await_cli_offline_disabled(
+            root,
+            &[
+                "projects",
+                "register",
+                "--output",
+                "json",
+                "--project-id",
+                project_id,
+                "--name",
+                "Cap Disabled E2E",
+                "--environment-id",
+                "local",
+                "--root",
+                &format!(
+                    "{{\"instanceId\":\"{instance_id}\",\"rootId\":\"root-cap\",\"relativePath\":\"ws\"}}"
+                ),
+            ],
+        ),
+    );
+    expect_ok(
+        "session.create",
+        &await_cli_offline_disabled(
+            root,
+            &[
+                "sessions",
+                "create",
+                "--output",
+                "json",
+                "--session-id",
+                session_id,
+                "--project-id",
+                project_id,
+            ],
+        ),
+    );
+
+    let q0 = expect_ok(
+        "queue.get",
+        &await_cli_offline_disabled(
+            root,
+            &[
+                "queue",
+                "get",
+                "--output",
+                "json",
+                "--session-id",
+                session_id,
+            ],
+        ),
+    );
+    let q0_rev = q0["queue"]["revision"].as_str().unwrap().to_owned();
+    expect_ok(
+        "queue.pause",
+        &await_cli_offline_disabled(
+            root,
+            &[
+                "queue",
+                "pause",
+                "--output",
+                "json",
+                "--session-id",
+                session_id,
+                "--expected-revision",
+                &q0_rev,
+                "--reason",
+                "cap-test",
+            ],
+        ),
+    );
+
+    let r1 = expect_ok(
+        "run.submit",
+        &await_cli_offline_disabled(
+            root,
+            &[
+                "run",
+                "submit",
+                "--output",
+                "json",
+                "--session-id",
+                session_id,
+                "--request-key",
+                "t009-cap-r1",
+                "--text",
+                "queued head",
+            ],
+        ),
+    )["runId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let r2 = expect_ok(
+        "run.submit",
+        &await_cli_offline_disabled(
+            root,
+            &[
+                "run",
+                "submit",
+                "--output",
+                "json",
+                "--session-id",
+                session_id,
+                "--request-key",
+                "t009-cap-r2",
+                "--text",
+                "queued promote candidate",
+            ],
+        ),
+    )["runId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let q_before = expect_ok(
+        "queue.get",
+        &await_cli_offline_disabled(
+            root,
+            &[
+                "queue",
+                "get",
+                "--output",
+                "json",
+                "--session-id",
+                session_id,
+            ],
+        ),
+    );
+    let q_rev = q_before["queue"]["revision"].as_str().unwrap().to_owned();
+
+    // steer.submit refuses CAPABILITY_UNAVAILABLE with zero DB writes.
+    let steer_out = await_cli_offline_disabled(
+        root,
+        &[
+            "steer",
+            "submit",
+            "--output",
+            "json",
+            "--run-id",
+            &r1,
+            "--steer-id",
+            "st-cap-e2e",
+            "--request-key",
+            "t009-cap-st",
+            "--input",
+            "[{\"kind\":\"text\",\"text\":\"blocked steer\"}]",
+        ],
+    );
+    assert_eq!(
+        expect_fail("steer.submit", &steer_out),
+        "CAPABILITY_UNAVAILABLE"
+    );
+    let steer_missing = await_cli_offline_disabled(
+        root,
+        &[
+            "steer",
+            "get",
+            "--output",
+            "json",
+            "--run-id",
+            &r1,
+            "--steer-id",
+            "st-cap-e2e",
+        ],
+    );
+    assert_eq!(expect_fail("steer.get", &steer_missing), "NOT_FOUND");
+
+    // queue.promote_to_steer refuses CAPABILITY_UNAVAILABLE without mutating queue.
+    let promote_out = await_cli_offline_disabled(
+        root,
+        &[
+            "queue",
+            "promote-to-steer",
+            "--output",
+            "json",
+            "--session-id",
+            session_id,
+            "--queued-run-id",
+            &r2,
+            "--active-run-id",
+            &r1,
+            "--expected-revision",
+            &q_rev,
+            "--steer-id",
+            "st-cap-promo",
+        ],
+    );
+    assert_eq!(
+        expect_fail("queue.promote_to_steer", &promote_out),
+        "CAPABILITY_UNAVAILABLE"
+    );
+    let q_after = expect_ok(
+        "queue.get",
+        &await_cli_offline_disabled(
+            root,
+            &[
+                "queue",
+                "get",
+                "--output",
+                "json",
+                "--session-id",
+                session_id,
+            ],
+        ),
+    );
+    assert_eq!(q_after["queue"]["revision"], q_rev);
+    assert_eq!(q_after["queue"]["items"].as_array().map(Vec::len), Some(2));
+}
+
+#[tokio::test]
+async fn steer_withdrawn_resubmit_conflicts_and_terminal_withdraw_conflicts() {
+    let home = TestHome::new("t009-wd-term");
+    let root = home.path();
+    init_home(root);
+
+    // 1. Withdrawn steerId cannot be reused under a different idempotencyKey.
+    let (_, s_wd) = seed_project_session(root, "t009wdr").await;
+    let r_wd = submit_run(root, &s_wd, "[pd-driver:sleep=60000]", "t009-wdr-run").await["runId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    wait_run_state(root, &r_wd, "running").await;
+
+    let st = expect_ok(
+        "steer.submit",
+        &steer_submit(root, &r_wd, "st-wd", "thought", Some("t009-wdr-k1")),
+    );
+    let st_rev = st["revision"].as_str().unwrap().to_owned();
+    let wd = expect_ok(
+        "steer.withdraw",
+        &steer_withdraw(root, &r_wd, "st-wd", &st_rev),
+    );
+    assert_eq!(wd["phase"], "withdrawn");
+
+    let reuse = steer_submit(root, &r_wd, "st-wd", "thought", Some("t009-wdr-k2"));
+    assert_eq!(expect_fail("steer.submit", &reuse), "IDEMPOTENCY_CONFLICT");
+
+    // 2. Unconsumed pending steer on a cancelled/terminal run cannot be withdrawn.
+    let (_, s_term) = seed_project_session(root, "t009wdt").await;
+    let r_term =
+        submit_run(root, &s_term, "[pd-driver:sleep=60000]", "t009-wdt-run").await["runId"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+    wait_run_state(root, &r_term, "running").await;
+
+    let pending = expect_ok(
+        "steer.submit",
+        &steer_submit(
+            root,
+            &r_term,
+            "st-term",
+            "late withdraw",
+            Some("t009-wdt-k1"),
+        ),
+    );
+    let pending_rev = pending["revision"].as_str().unwrap().to_owned();
+
+    expect_ok(
+        "run.cancel",
+        &await_cli(
+            root,
+            &["run", "cancel", "--output", "json", "--run-id", &r_term],
+        ),
+    );
+    let waited = expect_ok("run.wait", &wait_run(root, &r_term));
+    assert_eq!(waited["run"]["state"], "cancelled");
+
+    let wd_after_term = steer_withdraw(root, &r_term, "st-term", &pending_rev);
+    assert_eq!(
+        expect_fail("steer.withdraw", &wd_after_term),
+        "REVISION_CONFLICT"
+    );
+    let projected = expect_ok("steer.get", &steer_get(root, &r_term, "st-term"));
+    assert_eq!(projected["phase"], "rejected");
+    assert_eq!(projected["state"], "cancelled");
+}
+
+#[tokio::test]
+async fn run_continue_after_project_remove_fails_not_found() {
+    let home = TestHome::new("t009-cont-rm");
+    let root = home.path();
+    init_home(root);
+    let (project_id, session_id) = seed_project_session(root, "t009crm").await;
+
+    let submitted = submit_run(root, &session_id, "[pd-driver:sleep=60000]", "t009-crm-1").await;
+    let source_id = submitted["runId"].as_str().unwrap().to_owned();
+    wait_run_state(root, &source_id, "running").await;
+
+    let pid = home.gateway_pid().expect("gateway pid");
+    signal_pid(pid, rustix::process::Signal::KILL);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    let source = wait_run_state(root, &source_id, "interrupted").await;
+    let source_rev = source["revision"].as_str().unwrap().to_owned();
+
+    let proj = expect_ok(
+        "project.get",
+        &await_cli(
+            root,
+            &[
+                "projects",
+                "get",
+                "--output",
+                "json",
+                "--project-id",
+                &project_id,
+            ],
+        ),
+    );
+    let proj_rev = proj["project"]["revision"].as_str().unwrap().to_owned();
+
+    expect_ok(
+        "project.remove",
+        &await_cli(
+            root,
+            &[
+                "projects",
+                "remove",
+                "--output",
+                "json",
+                "--project-id",
+                &project_id,
+                "--expected-revision",
+                &proj_rev,
+            ],
+        ),
+    );
+
+    let cont = await_cli(
+        root,
+        &[
+            "run",
+            "continue",
+            "--output",
+            "json",
+            "--source-run-id",
+            &source_id,
+            "--expected-revision",
+            &source_rev,
+            "--request-key",
+            "t009-crm-cont",
+            "--text",
+            "after remove",
+        ],
+    );
+    assert_eq!(expect_fail("run.continue", &cont), "NOT_FOUND");
+}

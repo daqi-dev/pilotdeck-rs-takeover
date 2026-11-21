@@ -620,6 +620,7 @@ impl V1Store {
         }
         crate::public_v1::domains::discovery::recover_orphaned_discovery_executions(&tx, &now)
             .map_err(map_sql_err)?;
+        super::domains::interaction_lease::cleanup_expired_leases_in_tx(&tx)?;
 
         tx.commit().map_err(map_sql_err)?;
         Ok(())
@@ -1262,6 +1263,29 @@ impl V1Store {
             ));
         }
 
+        let project_exists: bool = tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM projects WHERE project_id = ?1)",
+                params![project_id],
+                |r| r.get(0),
+            )
+            .map_err(map_sql_err)?;
+        if !project_exists {
+            if let Some(key) = idempotency_key {
+                record_rejection_in_tx(
+                    &tx,
+                    key,
+                    "run.submit",
+                    &digest,
+                    CODE_NOT_FOUND,
+                    &now,
+                    &retained_until,
+                )?;
+                tx.commit().map_err(map_sql_err)?;
+            }
+            return Err(not_found("project", &project_id));
+        }
+
         if paused {
             if let Some(key) = idempotency_key {
                 record_rejection_in_tx(
@@ -1377,11 +1401,18 @@ impl V1Store {
             params![session_id, max_pos + 1, run_id],
         )
         .map_err(map_sql_err)?;
+        let qrev = next_rev_in_tx(&tx)?;
 
         if start_immediately {
             tx.execute(
-                "UPDATE sessions SET active_run_id = ?1 WHERE session_id = ?2",
-                params![run_id, session_id],
+                "UPDATE sessions SET active_run_id = ?1, queue_revision = ?2 WHERE session_id = ?3",
+                params![run_id, qrev, session_id],
+            )
+            .map_err(map_sql_err)?;
+        } else {
+            tx.execute(
+                "UPDATE sessions SET queue_revision = ?1 WHERE session_id = ?2",
+                params![qrev, session_id],
             )
             .map_err(map_sql_err)?;
         }
@@ -1555,7 +1586,8 @@ impl V1Store {
 
         let mut next_queued_run: Option<String> = None;
         if terminal {
-            tx.execute("DELETE FROM run_queue WHERE run_id = ?1", params![run_id])
+            let removed_from_queue = tx
+                .execute("DELETE FROM run_queue WHERE run_id = ?1", params![run_id])
                 .map_err(map_sql_err)?;
 
             if let Some(reason) = tr.pause_session_reason {
@@ -1566,19 +1598,39 @@ impl V1Store {
                 )
                 .map_err(map_sql_err)?;
             } else {
-                next_queued_run = tx
+                let sess_paused: i64 = tx
                     .query_row(
-                        "SELECT run_id FROM run_queue WHERE session_id = ?1 ORDER BY position ASC LIMIT 1",
+                        "SELECT queue_paused FROM sessions WHERE session_id = ?1",
                         params![existing.session_id],
                         |r| r.get(0),
                     )
                     .optional()
+                    .map_err(map_sql_err)?
+                    .unwrap_or(0);
+                if sess_paused == 0 {
+                    next_queued_run = tx
+                        .query_row(
+                            "SELECT run_id FROM run_queue WHERE session_id = ?1 ORDER BY position ASC LIMIT 1",
+                            params![existing.session_id],
+                            |r| r.get(0),
+                        )
+                        .optional()
+                        .map_err(map_sql_err)?;
+                }
+                if removed_from_queue > 0 {
+                    let qrev = next_rev_in_tx(&tx)?;
+                    tx.execute(
+                        "UPDATE sessions SET active_run_id = ?1, queue_revision = ?2 WHERE session_id = ?3",
+                        params![next_queued_run, qrev, existing.session_id],
+                    )
                     .map_err(map_sql_err)?;
-                tx.execute(
-                    "UPDATE sessions SET active_run_id = ?1 WHERE session_id = ?2",
-                    params![next_queued_run, existing.session_id],
-                )
-                .map_err(map_sql_err)?;
+                } else {
+                    tx.execute(
+                        "UPDATE sessions SET active_run_id = ?1 WHERE session_id = ?2",
+                        params![next_queued_run, existing.session_id],
+                    )
+                    .map_err(map_sql_err)?;
+                }
             }
         }
 
@@ -1773,7 +1825,8 @@ impl V1Store {
                 params![rev, cursor, now, run_id],
             )
             .map_err(map_sql_err)?;
-            tx.execute("DELETE FROM run_queue WHERE run_id = ?1", params![run_id])
+            let removed_q = tx
+                .execute("DELETE FROM run_queue WHERE run_id = ?1", params![run_id])
                 .map_err(map_sql_err)?;
             // wp4fix review P2: queue.resume pins the head run as
             // `sessions.active_run_id` while it is still queued; cancelling
@@ -1781,11 +1834,20 @@ impl V1Store {
             // every later submit queued forever without a worker claiming it
             // (until a gateway restart cleared the field). Clear the pin with
             // the same scoped update the terminal branch uses.
-            tx.execute(
-                "UPDATE sessions SET active_run_id = NULL WHERE session_id = ?1 AND active_run_id = ?2",
-                params![run.session_id, run_id],
-            )
-            .map_err(map_sql_err)?;
+            if removed_q > 0 {
+                let qrev = next_rev_in_tx(&tx)?;
+                tx.execute(
+                    "UPDATE sessions SET active_run_id = CASE WHEN active_run_id = ?2 THEN NULL ELSE active_run_id END, queue_revision = ?3 WHERE session_id = ?1",
+                    params![run.session_id, run_id, qrev],
+                )
+                .map_err(map_sql_err)?;
+            } else {
+                tx.execute(
+                    "UPDATE sessions SET active_run_id = NULL WHERE session_id = ?1 AND active_run_id = ?2",
+                    params![run.session_id, run_id],
+                )
+                .map_err(map_sql_err)?;
+            }
             ("requested", RunState::Cancelled, rev, true, true)
         } else {
             let rev = next_rev_in_tx(&tx)?;
@@ -1822,18 +1884,28 @@ impl V1Store {
             )
             .map_err(map_sql_err)?;
             if is_term {
-                tx.execute("DELETE FROM run_queue WHERE run_id = ?1", params![run_id])
+                let removed_q = tx
+                    .execute("DELETE FROM run_queue WHERE run_id = ?1", params![run_id])
                     .map_err(map_sql_err)?;
                 tx.execute(
                     "UPDATE interactions SET state = 'cancelled', resolution = 'cancelled', revision = ?1 WHERE run_id = ?2 AND state = 'pending'",
                     params![rev, run_id],
                 )
                 .map_err(map_sql_err)?;
-                tx.execute(
-                    "UPDATE sessions SET active_run_id = NULL WHERE session_id = ?1 AND active_run_id = ?2",
-                    params![run.session_id, run_id],
-                )
-                .map_err(map_sql_err)?;
+                if removed_q > 0 {
+                    let qrev = next_rev_in_tx(&tx)?;
+                    tx.execute(
+                        "UPDATE sessions SET active_run_id = CASE WHEN active_run_id = ?2 THEN NULL ELSE active_run_id END, queue_revision = ?3 WHERE session_id = ?1",
+                        params![run.session_id, run_id, qrev],
+                    )
+                    .map_err(map_sql_err)?;
+                } else {
+                    tx.execute(
+                        "UPDATE sessions SET active_run_id = NULL WHERE session_id = ?1 AND active_run_id = ?2",
+                        params![run.session_id, run_id],
+                    )
+                    .map_err(map_sql_err)?;
+                }
             }
             ("requested", target_state, rev, true, is_term)
         };
@@ -2064,6 +2136,7 @@ impl V1Store {
         expected_revision: &str,
         answer_value: Value,
         remember_scope: Option<&str>,
+        lease_id: Option<&str>,
     ) -> Result<InteractionResolveOutcome, ContractError> {
         let mut conn = self.conn.lock().expect("sqlite mutex");
         let tx = conn
@@ -2107,6 +2180,12 @@ impl V1Store {
                 EffectStatus::NotApplied,
             ));
         }
+
+        super::domains::interaction_lease::validate_and_consume_lease_in_tx(
+            &tx,
+            interaction_id,
+            lease_id,
+        )?;
 
         let new_rev = next_rev_in_tx(&tx)?;
         let policy_rev = remember_scope
@@ -2778,7 +2857,7 @@ pub(crate) fn pinned_run_is_live(
     };
     let live: Option<bool> = conn
         .query_row(
-            "SELECT terminal = 0 FROM runs WHERE run_id = ?1",
+            "SELECT terminal = 0 AND state IN ('running', 'waiting', 'cancelling') FROM runs WHERE run_id = ?1",
             params![run_id],
             |r| r.get(0),
         )
@@ -3067,24 +3146,31 @@ fn fetch_interaction_in_tx(
             answer_json,
             lease_owner,
             policy_revision,
-        )| StoredInteraction {
-            interaction_id,
-            kind,
-            run_id,
-            project_id,
-            session_id,
-            revision,
-            state,
-            resolution,
-            expires_at,
-            response_schema_id,
-            response_schema: serde_json::from_str(&response_schema_json).unwrap_or(json!({})),
-            prompt: serde_json::from_str(&prompt_json).unwrap_or_default(),
-            choices: serde_json::from_str(&choices_json).unwrap_or_default(),
-            lease_owner,
-            answer: answer_json.and_then(|s| serde_json::from_str(&s).ok()),
-            policy_revision,
-            instance_id: instance_id.to_owned(),
+        )| {
+            let lease_owner = super::domains::interaction_lease::effective_lease_owner(
+                conn,
+                &interaction_id,
+                lease_owner,
+            );
+            StoredInteraction {
+                interaction_id,
+                kind,
+                run_id,
+                project_id,
+                session_id,
+                revision,
+                state,
+                resolution,
+                expires_at,
+                response_schema_id,
+                response_schema: serde_json::from_str(&response_schema_json).unwrap_or(json!({})),
+                prompt: serde_json::from_str(&prompt_json).unwrap_or_default(),
+                choices: serde_json::from_str(&choices_json).unwrap_or_default(),
+                lease_owner,
+                answer: answer_json.and_then(|s| serde_json::from_str(&s).ok()),
+                policy_revision,
+                instance_id: instance_id.to_owned(),
+            }
         },
     ))
 }
