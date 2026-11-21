@@ -1192,7 +1192,7 @@ impl V1Store {
 /// accepts it (`runtime.rs::drive_owned_turn` integration hook).
 pub(crate) async fn forward_pending_steers_for_owned_turn(
     store: &V1Store,
-    owner: &crate::runtime::session::owner::SessionOwner,
+    owner: &crate::runtime::session::SessionOwner,
     session_id: &str,
     run_id: &str,
 ) -> usize {
