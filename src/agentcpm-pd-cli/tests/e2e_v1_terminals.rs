@@ -717,10 +717,35 @@ async fn terminals_lost_after_gateway_restart() {
     let terminal = create_terminal(home.path(), &project_id).await;
     let terminal_id = terminal["terminalId"].as_str().unwrap().to_owned();
 
-    // Restart the gateway (stop, then let the next CLI auto-start fresh).
+    // Graceful `mode=idle` stop must refuse while a live terminal is active;
+    // then simulate abrupt gateway crash (SIGKILL) so the next CLI auto-start
+    // detects the lost master fd and reports `state == "lost"`.
     let out = await_cli(home.path(), &["server", "stop", "--output", "json"]);
-    assert_eq!(out.code, 0, "server stop: {}", out.stderr);
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(
+        out.code, 1,
+        "idle server stop should refuse active terminal"
+    );
+    assert!(
+        out.stderr.contains("ACTIVE_RESOURCES") || out.stdout.contains("ACTIVE_RESOURCES"),
+        "expected ACTIVE_RESOURCES, stdout: {}, stderr: {}",
+        out.stdout,
+        out.stderr
+    );
+
+    let pid = home.gateway_pid().expect("gateway pid from ready.json");
+    common_v1::signal_pid(pid, rustix::process::Signal::KILL);
+    let target_pid = rustix::process::Pid::from_raw(pid as i32).expect("pid");
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        if rustix::process::test_kill_process(target_pid).is_err() {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "gateway pid {pid} did not exit after SIGKILL"
+        );
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
 
     let after = get_terminal(home.path(), &terminal_id).await;
     assert_eq!(after["state"], "lost", "a restarted gateway reports lost");
