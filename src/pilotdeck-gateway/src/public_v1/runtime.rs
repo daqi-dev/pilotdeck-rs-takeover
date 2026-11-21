@@ -4,13 +4,15 @@
 //! driver lives in `run_driver.rs` and is re-exported below.
 
 use std::collections::HashMap;
+use std::panic::AssertUnwindSafe;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::runtime::turn::submit::TurnSubmitter;
 use agentcpm_pd_protocol::contract::{OPERATION_VERSION, ResponseOutcome, RunState};
 use agentcpm_pd_protocol::envelope::bind_instance_id;
 use agentcpm_pd_protocol::errors::{
-    CODE_CAPABILITY_UNAVAILABLE, CODE_UNSUPPORTED_OPERATION, ContractError,
+    CODE_CAPABILITY_UNAVAILABLE, CODE_UNAVAILABLE, CODE_UNSUPPORTED_OPERATION, ContractError,
     ERR_CAPABILITY_UNAVAILABLE, ERR_MISSING_IDEMPOTENCY_KEY, EffectStatus,
     JSONRPC_METHOD_NOT_FOUND, RetrySpec,
 };
@@ -19,13 +21,14 @@ use agentcpm_pd_protocol::registry::{
     validation_errors_to_contract_error,
 };
 use agentcpm_pd_protocol::wire::MAX_FRAME_BYTES;
+use futures_util::FutureExt;
 use pilotdeck_protocol::JsValue;
 use serde_json::{Value, json};
 use tokio::sync::watch;
 
 use crate::public_v1::domains::DomainRegistry;
 use crate::public_v1::run_driver::{
-    cancel_run_now, extract_prompt_text, fail_run_now, succeed_run_now,
+    cancel_run_now, extract_prompt_text, fail_run_now, fail_run_now_async, succeed_run_now,
 };
 use crate::public_v1::store::{RunTransition, StoredRun, V1Store};
 
@@ -94,6 +97,13 @@ impl InteractionWaiterRegistry {
             let _ = tx.send(Some(answer));
         }
     }
+
+    fn clear_interaction_waiter(&self, interaction_id: &str) {
+        self.waiters
+            .lock()
+            .expect("interaction waiters")
+            .remove(interaction_id);
+    }
 }
 
 /// The next queued run of an unpaused session, skipping the run this worker
@@ -140,6 +150,8 @@ fn js_event_to_value(event: &JsValue) -> Option<Value> {
     serde_json::from_str(&text).ok()
 }
 
+const AUTH_CACHE_MAX_ENTRIES: usize = 256;
+
 pub struct PublicV1Runtime {
     store: Arc<V1Store>,
     driver: Arc<dyn RunDriver>,
@@ -150,6 +162,22 @@ pub struct PublicV1Runtime {
     /// explicitly in `input.runId`. `None` keeps the offline
     /// [`OfflineRunDriver`] test adapter (007 §7.2's no-model-key path).
     submitter: Option<Arc<TurnSubmitter>>,
+    draining: AtomicBool,
+    auth_revocation: watch::Sender<u64>,
+    auth_cache_epoch: AtomicU64,
+    auth_cache: Mutex<(u64, HashMap<String, bool>)>,
+}
+
+struct ClaimedRunGuard {
+    rt: Arc<PublicV1Runtime>,
+    run_id: String,
+    session_id: String,
+}
+
+impl Drop for ClaimedRunGuard {
+    fn drop(&mut self) {
+        self.rt.waiters.clear_run_cancel(&self.run_id);
+    }
 }
 
 impl PublicV1Runtime {
@@ -162,11 +190,16 @@ impl PublicV1Runtime {
         // per process, which marks every registered operation as implemented
         // (the availability set `dispatch` and `sub.open` admission read).
         let _ = DomainRegistry::global();
+        let (auth_revocation, _) = watch::channel(0u64);
         Arc::new(Self {
             store,
             driver,
             waiters: InteractionWaiterRegistry::default(),
             submitter: None,
+            draining: AtomicBool::new(false),
+            auth_revocation,
+            auth_cache_epoch: AtomicU64::new(0),
+            auth_cache: Mutex::new((0, HashMap::new())),
         })
     }
 
@@ -178,16 +211,103 @@ impl PublicV1Runtime {
         submitter: Arc<TurnSubmitter>,
     ) -> Arc<Self> {
         let _ = DomainRegistry::global();
+        let (auth_revocation, _) = watch::channel(0u64);
         Arc::new(Self {
             store,
             driver,
             waiters: InteractionWaiterRegistry::default(),
             submitter: Some(submitter),
+            draining: AtomicBool::new(false),
+            auth_revocation,
+            auth_cache_epoch: AtomicU64::new(0),
+            auth_cache: Mutex::new((0, HashMap::new())),
         })
     }
 
     pub fn store(&self) -> &Arc<V1Store> {
         &self.store
+    }
+
+    pub(crate) fn enter_draining(&self) {
+        self.draining.store(true, Ordering::SeqCst);
+    }
+
+    pub(crate) fn is_draining(&self) -> bool {
+        self.draining.load(Ordering::SeqCst)
+    }
+
+    pub(crate) fn subscribe_auth_revocation(&self) -> watch::Receiver<u64> {
+        self.auth_revocation.subscribe()
+    }
+
+    pub(crate) fn bump_auth_epoch(&self) {
+        let next = self.auth_cache_epoch.fetch_add(1, Ordering::SeqCst) + 1;
+        if let Ok(mut guard) = self.auth_cache.lock() {
+            guard.0 = next;
+            guard.1.clear();
+        }
+    }
+
+    pub(crate) fn notify_auth_revocation(&self) {
+        self.bump_auth_epoch();
+        let next = self.auth_revocation.borrow().wrapping_add(1);
+        let _ = self.auth_revocation.send(next);
+    }
+
+    pub(crate) fn cached_auth_decision(&self, digest: &str) -> (u64, Option<bool>) {
+        let epoch = self.auth_cache_epoch.load(Ordering::SeqCst);
+        let cached = self.auth_cache.lock().ok().and_then(|g| {
+            if g.0 == epoch {
+                g.1.get(digest).copied()
+            } else {
+                None
+            }
+        });
+        (epoch, cached)
+    }
+
+    pub(crate) fn record_auth_decision(&self, epoch: u64, digest: String, valid: bool) {
+        if self.auth_cache_epoch.load(Ordering::SeqCst) != epoch {
+            return;
+        }
+        if let Ok(mut guard) = self.auth_cache.lock() {
+            if self.auth_cache_epoch.load(Ordering::SeqCst) != epoch {
+                return;
+            }
+            if guard.0 != epoch {
+                guard.0 = epoch;
+                guard.1.clear();
+            }
+            if guard.1.len() >= AUTH_CACHE_MAX_ENTRIES {
+                guard.1.clear();
+            }
+            guard.1.insert(digest, valid);
+        }
+    }
+
+    pub(crate) async fn cancel_all_for_stop(self: &Arc<Self>) {
+        self.enter_draining();
+        let store = self.store.clone();
+        let run_ids = tokio::task::spawn_blocking(move || {
+            let _ = store.cancel_non_terminal_operations_for_stop();
+            store.list_non_terminal_run_ids()
+        })
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .unwrap_or_default();
+        for rid in run_ids {
+            let store_c = self.store.clone();
+            let rid_c = rid.clone();
+            let outcome =
+                tokio::task::spawn_blocking(move || store_c.cancel_run(&rid_c, None)).await;
+            if let Ok(Ok(out)) = outcome
+                && out.should_notify_worker
+            {
+                self.signal_run_cancel(&rid);
+            }
+            self.signal_run_cancel(&rid);
+        }
     }
 
     pub fn start_session_worker(self: &Arc<Self>, initial_run_id: String) {
@@ -200,84 +320,88 @@ impl PublicV1Runtime {
                 };
                 let session_id = run.session_id.clone();
                 if run.terminal {
-                    let next = rt
-                        .store
-                        .list_pending_runs_for_session(&run.session_id)
-                        .ok()
-                        .and_then(|v| v.into_iter().next());
-                    current = next;
+                    current = next_queued_run_except(&rt, &session_id, &run_id);
                     continue;
                 }
                 // P1 (wp4 review): exactly one worker may drive a run. The
                 // atomic claim fails for a run another worker already owns or
-                // for one that a racing `run.cancel` terminalized after this
-                // worker read it as queued.
+                // for one that a racing `run.cancel` terminalized or paused.
                 if !rt.store.claim_run_execution(&run_id).unwrap_or(false) {
                     current = next_queued_run_except(&rt, &session_id, &run_id);
                     continue;
                 }
-                if let Some(submitter) = rt.submitter.clone() {
-                    rt.drive_owned_turn(&submitter, run).await;
-                } else {
-                    let cancel_rx = rt.waiters.register_run_cancel(&run_id);
-                    // P2 (wp4 review): a cancel that landed between the claim
-                    // and this registration must not be lost — re-check the
-                    // durable state before handing the run to the driver.
-                    if let Ok(now) = rt.store.get_run(&run_id)
-                        && (now.terminal || now.state == RunState::Cancelling)
-                    {
-                        if !now.terminal {
-                            cancel_run_now(&rt.store, &run_id, &json!({"runId": run_id}));
+                let guard = ClaimedRunGuard {
+                    rt: rt.clone(),
+                    run_id: run_id.clone(),
+                    session_id: session_id.clone(),
+                };
+                let rt_exec = rt.clone();
+                let run_id_exec = run_id.clone();
+                let exec_res = AssertUnwindSafe(async move {
+                    if let Some(submitter) = rt_exec.submitter.clone() {
+                        rt_exec.drive_owned_turn(&submitter, run).await;
+                    } else {
+                        let cancel_rx = rt_exec.waiters.register_run_cancel(&run_id_exec);
+                        if let Ok(now) = rt_exec.store.get_run(&run_id_exec)
+                            && (now.terminal || now.state == RunState::Cancelling)
+                        {
+                            if !now.terminal {
+                                cancel_run_now(
+                                    &rt_exec.store,
+                                    &run_id_exec,
+                                    &json!({"runId": run_id_exec}),
+                                );
+                            }
+                            return;
                         }
-                        rt.waiters.clear_run_cancel(&run_id);
-                        current = next_queued_run_except(&rt, &session_id, &run_id);
-                        continue;
-                    }
-                    let ctx = RunDriverContext {
-                        store: rt.store.clone(),
-                        run,
-                        runtime: rt.clone(),
-                        cancel_rx,
-                    };
-                    rt.driver.execute(ctx).await;
-                    rt.waiters.clear_run_cancel(&run_id);
+                        let ctx = RunDriverContext {
+                            store: rt_exec.store.clone(),
+                            run,
+                            runtime: rt_exec.clone(),
+                            cancel_rx,
+                        };
+                        rt_exec.driver.execute(ctx).await;
 
-                    // Check whether driver already called transition_run_state to terminal; if not, finalize safely.
-                    if let Ok(after) = rt.store.get_run(&run_id)
+                        if let Ok(after) = rt_exec.store.get_run(&run_id_exec)
+                            && !after.terminal
+                        {
+                            succeed_run_now(
+                                &rt_exec.store,
+                                &run_id_exec,
+                                &json!({"runId": run_id_exec}),
+                            );
+                        }
+                        if let Ok(after) = rt_exec.store.get_run(&run_id_exec) {
+                            crate::public_v1::domains::snapshots::capture_run_boundary_logged(
+                                &rt_exec.store,
+                                &after,
+                            );
+                        }
+                    }
+                })
+                .catch_unwind()
+                .await;
+
+                if exec_res.is_err() {
+                    if let Ok(after) = rt.store.get_run(&guard.run_id)
                         && !after.terminal
                     {
-                        succeed_run_now(&rt.store, &run_id, &json!({"runId": run_id}));
+                        fail_run_now_async(
+                            &rt.store,
+                            &guard.run_id,
+                            "DRIVER_PANICKED",
+                            &json!({"runId": guard.run_id, "errorCode": "DRIVER_PANICKED"}),
+                        )
+                        .await;
                     }
-                    // A2 (snap-wire §5): the run is terminal now — aggregate
-                    // its capture ledger entries into one run-owned snapshot.
-                    // Capture failure is absorbed into a diagnostic progress
-                    // event; it must not flip the terminal run. (A1 attribution
-                    // is explicit since dsh r3 P1#3: driver writes carry the
-                    // run id at registration time, so there is no in-process
-                    // attribution left to clear here.)
-                    if let Ok(after) = rt.store.get_run(&run_id) {
-                        crate::public_v1::domains::snapshots::capture_run_boundary_logged(
-                            &rt.store, &after,
-                        );
-                    }
+                    let _ = rt
+                        .store
+                        .clear_active_run_if_matching(&guard.session_id, &guard.run_id);
                 }
+                drop(guard);
 
                 // Check if session queue is unpaused and still has pending queued runs.
-                current = match rt.store.get_queue(&session_id, None) {
-                    Ok(q) if q["queue"]["paused"].as_bool() == Some(false) => {
-                        let next_id = q["queue"]["items"]
-                            .as_array()
-                            .and_then(|arr| arr.first())
-                            .and_then(|item| item["runId"].as_str())
-                            .map(ToOwned::to_owned);
-                        if let Some(ref next_rid) = next_id {
-                            // Keep active_run_id pointing cleanly to the next run.
-                            let _ = rt.store.get_run(next_rid);
-                        }
-                        next_id
-                    }
-                    _ => None,
-                };
+                current = next_queued_run_except(&rt, &session_id, &run_id);
             }
         });
     }
@@ -406,12 +530,16 @@ impl PublicV1Runtime {
                 }
             }
             DriveStop::Error(error) => {
-                let payload = json!({
-                    "runId": run_id,
-                    "errorCode": error.code,
-                    "message": error.message,
-                });
-                fail_run_now(&self.store, &run_id, &error.code, &payload);
+                if let Ok(after) = self.store.get_run(&run_id)
+                    && !after.terminal
+                {
+                    let payload = json!({
+                        "runId": run_id,
+                        "errorCode": error.code,
+                        "message": error.message,
+                    });
+                    fail_run_now(&self.store, &run_id, &error.code, &payload);
+                }
             }
             DriveStop::Terminal => {
                 // The terminal transition is already durable; dropping the
@@ -628,6 +756,20 @@ impl PublicV1Runtime {
         reg.validate_input(method_id, &input)
             .map_err(|e| DispatchError::Application(validation_errors_to_contract_error(e)))?;
 
+        if self.is_draining()
+            && matches!(
+                method_id,
+                "run.submit" | "commands.execute" | "terminals.create"
+            )
+        {
+            return Err(DispatchError::Application(ContractError::new(
+                CODE_UNAVAILABLE,
+                "gateway is draining; refusing new submissions",
+                RetrySpec::never(),
+                EffectStatus::NotApplied,
+            )));
+        }
+
         // Domain dispatch table: the handler bodies live in `domains/`.
         let Some(handler) = domains.handler_for(method_id) else {
             // Unreachable today: every registered remote operation carries a
@@ -668,6 +810,10 @@ impl PublicV1Runtime {
         interaction_id: &str,
     ) -> watch::Receiver<Option<Value>> {
         self.waiters.register_interaction_waiter(interaction_id)
+    }
+
+    pub(crate) fn clear_interaction_waiter(&self, interaction_id: &str) {
+        self.waiters.clear_interaction_waiter(interaction_id);
     }
 
     pub(crate) fn notify_interaction_resolved(&self, interaction_id: &str, answer: Value) {

@@ -319,6 +319,19 @@ pub(crate) fn live_terminal_count() -> usize {
         .count()
 }
 
+pub(crate) fn close_all_live_terminals(graceful: bool) {
+    let handles: Vec<Arc<TerminalHandle>> = terminal_registry()
+        .lock()
+        .expect("terminal registry")
+        .iter()
+        .filter(|handle| handle.exit_facts().is_none())
+        .cloned()
+        .collect();
+    for handle in handles {
+        handle.request_close(graceful);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Spawn + supervision
 // ---------------------------------------------------------------------------

@@ -542,6 +542,7 @@ async fn journey_j4_file_tree_snapshot_surface_and_destructive_edits() {
 fn await_git_cli(home: &Path, args: &[&str]) -> CliOutcome {
     let mut cmd = std::process::Command::new(BIN);
     cmd.env("AGENTCPM_PD_HOME", home)
+        .env("AGENTCPM_PD_ENABLE_OFFLINE_DIRECTIVES", "1")
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .env("GIT_CONFIG_SYSTEM", "/dev/null")
         .stdin(Stdio::null())

@@ -1067,7 +1067,7 @@ async fn serve_socket(
                             // verify.
                             let bearer =
                                 crate::public_v1::PublicV1State::extract_bearer(request.headers());
-                            if !v1_state.authorize_headers(request.headers()) {
+                            if !v1_state.authorize_headers_async(request.headers()).await {
                                 return Ok(
                                     crate::public_v1::PublicV1State::unauthorized_http_response(),
                                 );

@@ -187,22 +187,6 @@ impl V1Store {
     /// answers `SESSION_CLOSED`; a missing or deleted session answers
     /// `NOT_FOUND` — matching what `submit_run` itself already reports for
     /// unknown sessions.
-    pub(crate) fn check_session_admission(&self, session_id: &str) -> Result<(), ContractError> {
-        let conn = self.conn.lock().expect("sqlite mutex");
-        let row = fetch_session_row(&conn, session_id)?;
-        match row.as_ref().map(|r| r.session_state.as_str()) {
-            None => Err(domain_not_found("session", session_id)),
-            Some("deleted") => Err(domain_not_found("session", session_id)),
-            Some("closed") => Err(ContractError::new(
-                CODE_SESSION_CLOSED,
-                format!("session `{session_id}` is closed; reopen it before submitting"),
-                RetrySpec::after_reconcile(),
-                EffectStatus::NotApplied,
-            )),
-            Some(_) => Ok(()),
-        }
-    }
-
     /// `session.update`: conditional rename / retag. History identity is
     /// untouched (only the session row's display fields and revision move).
     pub(crate) fn update_session(&self, input: &Value) -> Result<Value, ContractError> {

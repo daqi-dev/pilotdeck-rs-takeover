@@ -15,7 +15,7 @@ use tokio::sync::watch;
 use tokio::time::Instant;
 
 use crate::public_v1::runtime::PublicV1Runtime;
-use crate::public_v1::store::{RunTransition, StoredRun, V1Store};
+use crate::public_v1::store::{OwnedRunTransition, RunTransition, StoredRun, V1Store};
 
 pub type DriverFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
 
@@ -58,6 +58,41 @@ pub(crate) fn fail_run_now(store: &V1Store, run_id: &str, code: &str, payload: &
             .outcome_code(code)
             .pause_session_reason("run_failed"),
     );
+}
+
+pub(crate) async fn fail_run_now_async(
+    store: &Arc<V1Store>,
+    run_id: &str,
+    code: &str,
+    payload: &Value,
+) {
+    let tr = OwnedRunTransition::from_borrowed(
+        &RunTransition::new(RunState::Failed, "run.failed", payload)
+            .outcome_code(code)
+            .pause_session_reason("run_failed"),
+    );
+    let _ = store
+        .transition_run_state_async(run_id.to_owned(), tr)
+        .await;
+}
+
+pub(crate) fn offline_directives_enabled() -> bool {
+    match std::env::var("AGENTCPM_PD_ENABLE_OFFLINE_DIRECTIVES") {
+        Ok(v) if v == "1" => true,
+        Ok(v) if v == "0" => false,
+        _ => cfg!(test),
+    }
+}
+
+struct InteractionWaiterGuard<'a> {
+    runtime: &'a PublicV1Runtime,
+    interaction_id: String,
+}
+
+impl Drop for InteractionWaiterGuard<'_> {
+    fn drop(&mut self) {
+        self.runtime.clear_interaction_waiter(&self.interaction_id);
+    }
 }
 
 impl RunDriver for OfflineRunDriver {
@@ -154,8 +189,41 @@ impl RunDriver for OfflineRunDriver {
                         return;
                     };
                     let mut rx = ctx.runtime.register_interaction_waiter(&ia.interaction_id);
+                    let _waiter_guard = InteractionWaiterGuard {
+                        runtime: &ctx.runtime,
+                        interaction_id: ia.interaction_id.clone(),
+                    };
+                    let state_notifier = ctx.store.state_notifier();
                     loop {
-                        let resolved = rx.borrow_and_update().clone();
+                        let state_notified = state_notifier.notified();
+                        tokio::pin!(state_notified);
+                        state_notified.as_mut().enable();
+
+                        let mut resolved = rx.borrow_and_update().clone();
+                        if resolved.is_none()
+                            && let Ok(current) = ctx.store.get_interaction(&ia.interaction_id)
+                        {
+                            match current.state.as_str() {
+                                "answered" => resolved = current.answer,
+                                "cancelled" => {
+                                    cancel_run_now(&ctx.store, &run_id, &json!({"runId": run_id}));
+                                    return;
+                                }
+                                "expired" => {
+                                    let _ = ctx.store.transition_run_state(
+                                        &run_id,
+                                        RunTransition::new(
+                                            RunState::Failed,
+                                            "run.failed",
+                                            &json!({"runId": run_id, "errorCode": "INTERACTION_EXPIRED"}),
+                                        )
+                                        .outcome_code("INTERACTION_EXPIRED"),
+                                    );
+                                    return;
+                                }
+                                _ => {}
+                            }
+                        }
                         if let Some(ans) = resolved {
                             let decision = ans
                                 .get("decision")
@@ -186,6 +254,7 @@ impl RunDriver for OfflineRunDriver {
                         }
                         tokio::select! {
                             _ = rx.changed() => {}
+                            _ = state_notified => {}
                             _ = ctx.cancel_rx.changed() => {}
                         }
                     }
@@ -214,8 +283,41 @@ impl RunDriver for OfflineRunDriver {
                         return;
                     };
                     let mut rx = ctx.runtime.register_interaction_waiter(&ia.interaction_id);
+                    let _waiter_guard = InteractionWaiterGuard {
+                        runtime: &ctx.runtime,
+                        interaction_id: ia.interaction_id.clone(),
+                    };
+                    let state_notifier = ctx.store.state_notifier();
                     loop {
-                        let resolved = rx.borrow_and_update().clone();
+                        let state_notified = state_notifier.notified();
+                        tokio::pin!(state_notified);
+                        state_notified.as_mut().enable();
+
+                        let mut resolved = rx.borrow_and_update().clone();
+                        if resolved.is_none()
+                            && let Ok(current) = ctx.store.get_interaction(&ia.interaction_id)
+                        {
+                            match current.state.as_str() {
+                                "answered" => resolved = current.answer,
+                                "cancelled" => {
+                                    cancel_run_now(&ctx.store, &run_id, &json!({"runId": run_id}));
+                                    return;
+                                }
+                                "expired" => {
+                                    let _ = ctx.store.transition_run_state(
+                                        &run_id,
+                                        RunTransition::new(
+                                            RunState::Failed,
+                                            "run.failed",
+                                            &json!({"runId": run_id, "errorCode": "INTERACTION_EXPIRED"}),
+                                        )
+                                        .outcome_code("INTERACTION_EXPIRED"),
+                                    );
+                                    return;
+                                }
+                                _ => {}
+                            }
+                        }
                         if let Some(ans) = resolved {
                             succeed_run_now(
                                 &ctx.store,
@@ -230,6 +332,7 @@ impl RunDriver for OfflineRunDriver {
                         }
                         tokio::select! {
                             _ = rx.changed() => {}
+                            _ = state_notified => {}
                             _ = ctx.cancel_rx.changed() => {}
                         }
                     }
@@ -349,6 +452,8 @@ impl RunDriver for OfflineRunDriver {
                     let notifier = ctx.store.state_notifier();
                     loop {
                         let notified = notifier.notified();
+                        tokio::pin!(notified);
+                        notified.as_mut().enable();
                         let taken = match ctx.store.take_pending_steer(&run_id) {
                             Ok(steer) => steer,
                             Err(_) => {
@@ -447,14 +552,20 @@ impl RunDriver for OfflineRunDriver {
                     );
                     // The local wait bound; the authoritative expiry is the
                     // invocation row's expires_at (applied lazily on reads).
+                    let wait_dur = Duration::from_millis(
+                        u64::try_from(fired.deadline_ms)
+                            .unwrap_or(60_000)
+                            .clamp(1, 86_400_000),
+                    );
                     let wait_bound = tokio::time::Instant::now()
-                        + Duration::from_millis(
-                            u64::try_from(fired.deadline_ms).unwrap_or(60_000).max(1),
-                        );
+                        .checked_add(wait_dur)
+                        .unwrap_or_else(|| tokio::time::Instant::now() + Duration::from_secs(60));
                     let notifier = ctx.store.state_notifier();
                     loop {
-                        // 先登记 notified 再查表（AwaitSteer 同款防丢唤醒）。
+                        // 先登记 notified 并立刻 enable，防 await 前丢唤醒。
                         let notified = notifier.notified();
+                        tokio::pin!(notified);
+                        notified.as_mut().enable();
                         if *ctx.cancel_rx.borrow() {
                             let _ = crate::public_v1::domains::hooks::cancel_invocation(
                                 &ctx.runtime,
@@ -710,6 +821,13 @@ pub(crate) fn extract_prompt_text(input: &Value) -> String {
 }
 
 fn parse_driver_directive(text: &str) -> DriverDirective {
+    parse_driver_directive_with_policy(text, offline_directives_enabled())
+}
+
+fn parse_driver_directive_with_policy(text: &str, allow_directives: bool) -> DriverDirective {
+    if !allow_directives {
+        return DriverDirective::Sleep(25);
+    }
     // A5 (snap-wire §5): collect every write instruction first — a prompt
     // carrying any `[pd-driver:write=...]` is a write prompt; the other
     // directives stay standalone markers.
@@ -800,4 +918,33 @@ fn parse_driver_writes(text: &str) -> Vec<Result<DriverFileWrite, String>> {
         rest = next;
     }
     writes
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn offline_directives_are_disabled_when_policy_disallows_them() {
+        for prompt in [
+            "[pd-driver:write=evil.txt@pwned]",
+            "[pd-driver:fail]",
+            "[pd-driver:events=5000]",
+            "[pd-driver:sleep=60000]",
+            "[pd-driver:maintenance=5000]",
+            "[pd-driver:await_steer]",
+            "[pd-driver:approval]",
+            "[pd-driver:question]",
+            "[pd-driver:fire-hook=hk-1]",
+        ] {
+            assert!(matches!(
+                parse_driver_directive_with_policy(prompt, false),
+                DriverDirective::Sleep(25)
+            ));
+        }
+        assert!(matches!(
+            parse_driver_directive_with_policy("[pd-driver:write=ok.txt@hi]", true),
+            DriverDirective::Writes(_)
+        ));
+    }
 }

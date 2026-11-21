@@ -2579,3 +2579,187 @@ async fn run_wait_exit_code_matrix_0_1_3_130() {
     );
     expect_ok("run.cancel", &cancel);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn production_binary_ignores_offline_driver_directives_by_default() {
+    fn run_cli_unsealed(home: &std::path::Path, args: &[&str]) -> CliOutcome {
+        let mut cmd = std::process::Command::new(BIN);
+        cmd.env("AGENTCPM_PD_HOME", home)
+            .env_remove("AGENTCPM_PD_ENABLE_OFFLINE_DIRECTIVES")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .args(args);
+        let output = cmd.output().expect("spawn agentcpm-pd");
+        CliOutcome {
+            code: output.status.code().unwrap_or(-1),
+            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        }
+    }
+
+    let home = TestHome::new("no-directives");
+    let root = home.path();
+    let init = run_cli_unsealed(root, &["instance", "init", "--output", "json"]);
+    let init = expect_ok("instance.initialize", &init);
+    let iid = init["identity"]["instanceId"]
+        .as_str()
+        .expect("instanceId")
+        .to_owned();
+
+    // Verify local.token and local.json are both 0o600 and local.token is 64 lowercase hex CSPRNG bytes.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let json_mode = std::fs::metadata(root.join("local.json"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        let tok_mode = std::fs::metadata(root.join("local.token"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(json_mode, 0o600, "local.json must be 0600");
+        assert_eq!(tok_mode, 0o600, "local.token must be 0600");
+    }
+    let token = std::fs::read_to_string(root.join("local.token")).unwrap();
+    assert_eq!(token.trim().len(), 64);
+
+    // Ensure project workspace exists so `[pd-driver:write=...]` would succeed if active.
+    let ws_dir = root.join("workspaces").join("ws-unsealed");
+    std::fs::create_dir_all(&ws_dir).unwrap();
+    let root_spec =
+        format!(r#"{{"instanceId":"{iid}","rootId":"root-1","relativePath":"ws-unsealed"}}"#);
+    let proj = run_cli_unsealed(
+        root,
+        &[
+            "projects",
+            "register",
+            "--output",
+            "json",
+            "--project-id",
+            "proj-sec",
+            "--name",
+            "Sec",
+            "--environment-id",
+            "local",
+            "--root",
+            &root_spec,
+        ],
+    );
+    let _ = expect_ok("project.register", &proj);
+    let sess = run_cli_unsealed(
+        root,
+        &[
+            "sessions",
+            "create",
+            "--output",
+            "json",
+            "--session-id",
+            "sess-sec",
+            "--project-id",
+            "proj-sec",
+        ],
+    );
+    let _ = expect_ok("session.create", &sess);
+    // 1) `[pd-driver:fail]` must be ignored in default production mode and succeed.
+    let fail_run = run_cli_unsealed(
+        root,
+        &[
+            "run",
+            "submit",
+            "--output",
+            "json",
+            "--session-id",
+            "sess-sec",
+            "--request-key",
+            "sec-fail-1",
+            "--text",
+            "[pd-driver:fail]",
+        ],
+    );
+    let fail_run_res = expect_ok("run.submit", &fail_run);
+    let fail_run_id = fail_run_res["runId"].as_str().unwrap();
+    let fail_wait = run_cli_unsealed(
+        root,
+        &[
+            "run",
+            "wait",
+            "--output",
+            "json",
+            "--run-id",
+            fail_run_id,
+            "--timeout-ms",
+            "15000",
+        ],
+    );
+    let fail_wait_res = expect_ok("run.wait", &fail_wait);
+    assert_eq!(
+        fail_wait_res["run"]["state"], "succeeded",
+        "production binary without AGENTCPM_PD_ENABLE_OFFLINE_DIRECTIVES=1 must ignore [pd-driver:fail]"
+    );
+
+    // 2) `[pd-driver:write=...]` must also be ignored and leave no injected file via files.read.
+    let run = run_cli_unsealed(
+        root,
+        &[
+            "run",
+            "submit",
+            "--output",
+            "json",
+            "--session-id",
+            "sess-sec",
+            "--request-key",
+            "sec-write-1",
+            "--text",
+            "[pd-driver:write=injected.txt@pwned]",
+        ],
+    );
+    let run_res = expect_ok("run.submit", &run);
+    let run_id = run_res["runId"].as_str().unwrap();
+    let wait = run_cli_unsealed(
+        root,
+        &[
+            "run",
+            "wait",
+            "--output",
+            "json",
+            "--run-id",
+            run_id,
+            "--timeout-ms",
+            "15000",
+        ],
+    );
+    let wait_res = expect_ok("run.wait", &wait);
+    assert_eq!(wait_res["run"]["state"], "succeeded");
+    let read_path_arg = serde_json::json!({
+        "projectId": "proj-sec",
+        "relativePath": {"encoding": "utf8", "value": "injected.txt"},
+    })
+    .to_string();
+    let read = run_cli_unsealed(
+        root,
+        &[
+            "files",
+            "read",
+            "--output",
+            "json",
+            "--path",
+            &read_path_arg,
+            "--max-bytes",
+            "1024",
+        ],
+    );
+    assert_ne!(
+        read.code, 0,
+        "production binary without AGENTCPM_PD_ENABLE_OFFLINE_DIRECTIVES=1 must NOT write files from prompt directives (iid={iid}): stdout={} stderr={}",
+        read.stdout, read.stderr
+    );
+    assert!(
+        !ws_dir.join("injected.txt").exists(),
+        "unexpected injected.txt at {} (iid={iid})",
+        ws_dir.display()
+    );
+}

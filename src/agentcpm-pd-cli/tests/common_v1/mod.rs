@@ -100,6 +100,7 @@ pub struct CliOutcome {
 pub fn base_command(home: &Path) -> Command {
     let mut cmd = Command::new(BIN);
     cmd.env("AGENTCPM_PD_HOME", home);
+    cmd.env("AGENTCPM_PD_ENABLE_OFFLINE_DIRECTIVES", "1");
     cmd.stdin(Stdio::null());
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
@@ -118,6 +119,7 @@ pub fn base_command(home: &Path) -> Command {
 pub fn await_cli(home: &Path, args: &[&str]) -> CliOutcome {
     let mut cmd = std::process::Command::new(BIN);
     cmd.env("AGENTCPM_PD_HOME", home);
+    cmd.env("AGENTCPM_PD_ENABLE_OFFLINE_DIRECTIVES", "1");
     cmd.stdin(Stdio::null());
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
@@ -1012,6 +1014,7 @@ pub fn serve_remote(home_b: &Path) -> RemoteServe {
     let data_root = home_b.display().to_string();
     let mut cmd = StdCommand::new(BIN);
     cmd.env("AGENTCPM_PD_HOME", home_b);
+    cmd.env("AGENTCPM_PD_ENABLE_OFFLINE_DIRECTIVES", "1");
     cmd.stdin(Stdio::null());
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());

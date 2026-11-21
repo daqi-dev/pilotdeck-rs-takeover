@@ -1,8 +1,8 @@
 //! `pd-connect/1` WebSocket transport session over `/v1/ws` (`007 §6, WP4`).
 
-use std::collections::{HashMap, VecDeque};
-use std::sync::Arc;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
 use agentcpm_pd_protocol::contract::{EventEnvelope, OPERATION_VERSION};
@@ -34,10 +34,67 @@ use crate::public_v1::PublicV1State;
 use crate::public_v1::runtime::{DispatchError, capability_unavailable_rpc_error};
 use crate::public_v1::store::{StoredEvent, V1Store, now_rfc3339};
 
+const MAX_SUBSCRIPTION_CREDIT: u64 = 100_000;
+const GATEWAY_FEATURES: &[&str] = &[
+    "subscriptions",
+    "control-priority",
+    "idempotency",
+    "credit",
+    "heartbeat",
+];
+
 struct ActiveSubscription {
     credit: Arc<AtomicU64>,
     credit_notify: Arc<Notify>,
     cancel_tx: watch::Sender<bool>,
+}
+
+struct InFlightGuard {
+    set: Arc<StdMutex<HashSet<String>>>,
+    id: String,
+}
+
+impl InFlightGuard {
+    fn try_acquire(set: &Arc<StdMutex<HashSet<String>>>, id: &str) -> Option<Self> {
+        let mut guard = set.lock().expect("ws in-flight mutex");
+        if !guard.insert(id.to_owned()) {
+            return None;
+        }
+        Some(Self {
+            set: set.clone(),
+            id: id.to_owned(),
+        })
+    }
+}
+
+impl Drop for InFlightGuard {
+    fn drop(&mut self) {
+        if let Ok(mut guard) = self.set.lock() {
+            guard.remove(&self.id);
+        }
+    }
+}
+
+struct SubRegistrationGuard {
+    subs: Arc<Mutex<HashMap<String, ActiveSubscription>>>,
+    sub_id: String,
+    armed: bool,
+}
+
+impl Drop for SubRegistrationGuard {
+    fn drop(&mut self) {
+        if self.armed {
+            let subs = self.subs.clone();
+            let sub_id = self.sub_id.clone();
+            if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                handle.spawn(async move {
+                    if let Some(sub) = subs.lock().await.remove(&sub_id) {
+                        let _ = sub.cancel_tx.send(true);
+                    }
+                });
+            }
+        }
+    }
 }
 
 /// P1 (wp4 review): sends the connection-stop signal on any exit — including
@@ -123,15 +180,36 @@ pub async fn serve_v1_ws<S>(
     let initialized = Arc::new(AtomicBool::new(false));
     let control_sem = Arc::new(Semaphore::new(MAX_CONTROL_PENDING));
     let normal_sem = Arc::new(Semaphore::new(MAX_PENDING));
+    let in_flight_ids: Arc<StdMutex<HashSet<String>>> = Arc::new(StdMutex::new(HashSet::new()));
     let subscriptions: Arc<Mutex<HashMap<String, ActiveSubscription>>> =
         Arc::new(Mutex::new(HashMap::new()));
     let conn_id = state.runtime.store().next_id();
 
-    // The credential this session authenticated with: the HTTP-upgrade
-    // Bearer, replaced by the `initialize` credential when the client
-    // presents one (both are verified at their admission point). Re-verified
-    // before every inbound frame is admitted (Plan A).
-    let mut session_credential = http_credential;
+    // The credential this session authenticated with at HTTP upgrade; must
+    // remain present and match any credential presented on `initialize`.
+    let session_credential = http_credential;
+    let mut revocation_rx = state.subscribe_auth_revocation();
+
+    // Fail closed immediately if HTTP upgrade did not supply a valid credential.
+    let initial_valid = match session_credential.as_deref() {
+        Some(c) => state.verify_token_async(c).await,
+        None => false,
+    };
+    if !initial_valid {
+        let _ = ctrl_tx
+            .send(Message::Close(Some(
+                tokio_tungstenite::tungstenite::protocol::CloseFrame {
+                    code: CloseCode::Policy,
+                    reason: "missing or invalid session credential".into(),
+                },
+            )))
+            .await;
+        drop(ctrl_tx);
+        drop(norm_tx);
+        drop(sub_tx);
+        let _ = tokio::time::timeout(Duration::from_millis(200), &mut writer_handle).await;
+        return;
+    }
 
     let (conn_stop_tx, conn_stop_rx) = watch::channel(false);
     // P1 (wp4 review): owns the sender so every exit path — including a task
@@ -166,26 +244,45 @@ pub async fn serve_v1_ws<S>(
     });
 
     loop {
+        if *server_stop.borrow() {
+            shutdown_v1_ws(&conn_stop_guard, &subscriptions, &ctrl_tx).await;
+            break;
+        }
         tokio::select! {
             biased;
             _ = server_stop.changed() => {
                 if *server_stop.borrow() {
-                    let _ = conn_stop_guard.0.send(true);
-                    let subs = {
-                        let mut guard = subscriptions.lock().await;
-                        guard.drain().collect::<Vec<_>>()
-                    };
-                    for (_, sub) in subs {
-                        let _ = sub.cancel_tx.send(true);
-                    }
-                    tokio::time::sleep(Duration::from_millis(80)).await;
-                    let _ = ctrl_tx
-                        .send(Message::Close(Some(tokio_tungstenite::tungstenite::protocol::CloseFrame {
-                            code: CloseCode::Restart,
-                            reason: "gateway shutting down".into(),
-                        })))
-                        .await;
+                    shutdown_v1_ws(&conn_stop_guard, &subscriptions, &ctrl_tx).await;
                     break;
+                }
+            }
+            changed = revocation_rx.changed() => {
+                if changed.is_ok() {
+                    let still_valid = match session_credential.as_deref() {
+                        Some(c) => state.verify_token_async(c).await,
+                        None => false,
+                    };
+                    if !still_valid {
+                        // Give active subscription pumps a short window to flush
+                        // `sub.end(error/UNAUTHENTICATED)` onto `ctrl_tx` before closing.
+                        tokio::time::sleep(Duration::from_millis(80)).await;
+                        let subs = {
+                            let mut guard = subscriptions.lock().await;
+                            guard.drain().collect::<Vec<_>>()
+                        };
+                        for (_, sub) in subs {
+                            let _ = sub.cancel_tx.send(true);
+                        }
+                        let _ = ctrl_tx
+                            .send(Message::Close(Some(
+                                tokio_tungstenite::tungstenite::protocol::CloseFrame {
+                                    code: CloseCode::Policy,
+                                    reason: "credential no longer active".into(),
+                                },
+                            )))
+                            .await;
+                        break;
+                    }
                 }
             }
             frame = ws_source.next() => {
@@ -196,7 +293,10 @@ pub async fn serve_v1_ws<S>(
                                 None,
                                 JSONRPC_INVALID_REQUEST,
                                 format!("frame exceeds {MAX_FRAME_BYTES} byte limit"),
-                                None,
+                                Some(json!({
+                                    "reason": "frame_too_large",
+                                    "maxFrameBytes": MAX_FRAME_BYTES,
+                                })),
                             );
                             send_json_frame(&ctrl_tx, &resp).await;
                             continue;
@@ -208,35 +308,50 @@ pub async fn serve_v1_ws<S>(
                             &txt,
                             &state,
                             &conn_id,
-                            &mut session_credential,
+                            &session_credential,
                             &initialized,
                             &control_sem,
                             &normal_sem,
+                            &in_flight_ids,
                             &subscriptions,
                             &ctrl_tx,
                             &norm_tx,
                             &sub_tx,
                             &conn_stop_rx,
                         );
-                        let disconnect = tokio::select! {
-                            biased;
-                            _ = server_stop.changed() => false,
-                            result = handled => result,
+                        enum InnerOutcome {
+                            Stop,
+                            Done(bool),
+                        }
+                        tokio::pin!(handled);
+                        let outcome = loop {
+                            tokio::select! {
+                                biased;
+                                res = server_stop.changed() => {
+                                    if res.is_err() || *server_stop.borrow() {
+                                        break InnerOutcome::Stop;
+                                    }
+                                }
+                                result = &mut handled => break InnerOutcome::Done(result),
+                            }
                         };
-                        if disconnect {
-                            // Plan A: the session's credential stopped
-                            // verifying (access key disabled or revoked).
-                            // Close the stream; the loop-exit path cancels
-                            // the subscription pumps.
-                            let _ = ctrl_tx
-                                .send(Message::Close(Some(
-                                    tokio_tungstenite::tungstenite::protocol::CloseFrame {
-                                        code: CloseCode::Policy,
-                                        reason: "credential no longer active".into(),
-                                    },
-                                )))
-                                .await;
-                            break;
+                        match outcome {
+                            InnerOutcome::Stop => {
+                                shutdown_v1_ws(&conn_stop_guard, &subscriptions, &ctrl_tx).await;
+                                break;
+                            }
+                            InnerOutcome::Done(true) => {
+                                let _ = ctrl_tx
+                                    .send(Message::Close(Some(
+                                        tokio_tungstenite::tungstenite::protocol::CloseFrame {
+                                            code: CloseCode::Policy,
+                                            reason: "credential no longer active".into(),
+                                        },
+                                    )))
+                                    .await;
+                                break;
+                            }
+                            InnerOutcome::Done(false) => {}
                         }
                     }
                     Some(Ok(Message::Close(_))) | None => break,
@@ -268,6 +383,30 @@ pub async fn serve_v1_ws<S>(
     }
 }
 
+async fn shutdown_v1_ws(
+    conn_stop_guard: &ConnStopOnDrop,
+    subscriptions: &Arc<Mutex<HashMap<String, ActiveSubscription>>>,
+    ctrl_tx: &mpsc::Sender<Message>,
+) {
+    let _ = conn_stop_guard.0.send(true);
+    let subs = {
+        let mut guard = subscriptions.lock().await;
+        guard.drain().collect::<Vec<_>>()
+    };
+    for (_, sub) in subs {
+        let _ = sub.cancel_tx.send(true);
+    }
+    tokio::time::sleep(Duration::from_millis(80)).await;
+    let _ = ctrl_tx
+        .send(Message::Close(Some(
+            tokio_tungstenite::tungstenite::protocol::CloseFrame {
+                code: CloseCode::Restart,
+                reason: "gateway shutting down".into(),
+            },
+        )))
+        .await;
+}
+
 /// Handles one inbound text frame. Returns `true` when the session's
 /// credential stopped verifying (Plan A disconnect); `false` on every other
 /// path.
@@ -276,16 +415,42 @@ async fn handle_ws_text_frame(
     raw: &str,
     state: &Arc<PublicV1State>,
     conn_id: &str,
-    session_credential: &mut Option<String>,
+    session_credential: &Option<String>,
     initialized: &Arc<AtomicBool>,
     control_sem: &Arc<Semaphore>,
     normal_sem: &Arc<Semaphore>,
+    in_flight_ids: &Arc<StdMutex<HashSet<String>>>,
     subscriptions: &Arc<Mutex<HashMap<String, ActiveSubscription>>>,
     ctrl_tx: &mpsc::Sender<Message>,
     norm_tx: &mpsc::Sender<Message>,
     sub_tx: &mpsc::Sender<Message>,
     conn_stop: &watch::Receiver<bool>,
 ) -> bool {
+    // Plan A fail-closed re-verification BEFORE full JSON processing:
+    // revoked/disabled or missing session credentials are rejected first.
+    let cred_valid = match session_credential.as_deref() {
+        Some(credential) => state.verify_token_async(credential).await,
+        None => false,
+    };
+    if !cred_valid {
+        let err = ContractError::new(
+            CODE_UNAUTHENTICATED,
+            "credential rejected: access key is no longer active",
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        );
+        let request_id = serde_json::from_str::<Value>(raw)
+            .ok()
+            .and_then(|v| v.get("id").and_then(Value::as_str).map(ToOwned::to_owned))
+            .unwrap_or_default();
+        send_json_frame(
+            ctrl_tx,
+            &JsonRpcResponse::application_error(request_id, &err),
+        )
+        .await;
+        return true;
+    }
+
     let val: Value = match serde_json::from_str(raw) {
         Ok(v) => v,
         Err(e) => {
@@ -302,37 +467,6 @@ async fn handle_ws_text_frame(
             return false;
         }
     };
-
-    // Plan A: admission-boundary re-verification. The session's credential
-    // (HTTP-upgrade Bearer, or the `initialize` credential once presented)
-    // is re-checked before any frame is admitted; a disabled or revoked
-    // access key fails here, so the next request is rejected AND the stream
-    // closes (the caller sends the Close frame on `true`). `local.token`
-    // sessions short-circuit in the constant-time compare with no database
-    // access.
-    if let Some(credential) = session_credential.as_ref()
-        && !state.verify_token_str(credential)
-    {
-        let err = ContractError::new(
-            CODE_UNAUTHENTICATED,
-            "credential rejected: access key is no longer active",
-            RetrySpec::never(),
-            EffectStatus::NotApplied,
-        );
-        // Requests carry a string id (echoed back so clients can match the
-        // rejection); notification frames get an empty id.
-        let request_id = val
-            .get("id")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_owned();
-        send_json_frame(
-            ctrl_tx,
-            &JsonRpcResponse::application_error(request_id, &err),
-        )
-        .await;
-        return true;
-    }
 
     if val.get("id").is_none() || val.get("id").is_some_and(Value::is_null) {
         if let Ok(notif) = serde_json::from_value::<JsonRpcNotification>(val)
@@ -384,7 +518,39 @@ async fn handle_ws_text_frame(
         return false;
     }
 
+    // Track unique in-flight requestId (`007 §6.3`): duplicate concurrent ids
+    // immediately fail with JSON-RPC -32600 without affecting the first call.
+    let in_flight_guard = match InFlightGuard::try_acquire(in_flight_ids, &req.id) {
+        Some(guard) => guard,
+        None => {
+            send_json_frame(
+                ctrl_tx,
+                &JsonRpcResponse::err(
+                    Some(req.id),
+                    JSONRPC_INVALID_REQUEST,
+                    "duplicate in-flight requestId",
+                    None,
+                ),
+            )
+            .await;
+            return false;
+        }
+    };
+
     if req.method == WIRE_INITIALIZE {
+        if initialized.load(Ordering::SeqCst) {
+            send_json_frame(
+                ctrl_tx,
+                &JsonRpcResponse::err(
+                    Some(req.id),
+                    JSONRPC_INVALID_REQUEST,
+                    "connection already initialized",
+                    None,
+                ),
+            )
+            .await;
+            return false;
+        }
         let params: InitializeParams = match serde_json::from_value(req.params) {
             Ok(p) => p,
             Err(e) => {
@@ -401,40 +567,54 @@ async fn handle_ws_text_frame(
                 return false;
             }
         };
-        if params.abi_version != ABI_VERSION || params.api_version != OPERATION_VERSION {
+        if params.abi_version != ABI_VERSION {
             send_json_frame(
                 ctrl_tx,
                 &JsonRpcResponse::err(
                     Some(req.id),
                     ERR_UNSUPPORTED_VERSION,
-                    format!(
-                        "unsupported abiVersion={} apiVersion={}",
-                        params.abi_version, params.api_version
-                    ),
-                    None,
+                    format!("unsupported abiVersion={}", params.abi_version),
+                    Some(json!({"supported": [ABI_VERSION]})),
                 ),
             )
             .await;
             return false;
         }
-        if let Some(cred) = &params.credential
-            && !state.verify_token_str(cred)
-        {
-            let err = ContractError::new(
-                CODE_UNAUTHENTICATED,
-                "invalid credential during initialize",
-                RetrySpec::never(),
-                EffectStatus::NotApplied,
-            );
-            send_json_frame(ctrl_tx, &JsonRpcResponse::application_error(req.id, &err)).await;
+        if params.api_version != OPERATION_VERSION {
+            send_json_frame(
+                ctrl_tx,
+                &JsonRpcResponse::err(
+                    Some(req.id),
+                    ERR_UNSUPPORTED_VERSION,
+                    format!("unsupported apiVersion={}", params.api_version),
+                    Some(json!({"supported": [OPERATION_VERSION]})),
+                ),
+            )
+            .await;
             return false;
         }
-        // The verified `initialize` credential becomes the session's
-        // re-verification credential (replacing the HTTP-upgrade Bearer);
-        // connections that omit it keep re-verifying the upgrade Bearer.
         if let Some(cred) = &params.credential {
-            *session_credential = Some(cred.clone());
+            let matches_upgrade = session_credential.as_deref().is_some_and(|hc| {
+                crate::public_v1::constant_time_eq(hc.as_bytes(), cred.as_bytes())
+            });
+            if !matches_upgrade || !state.verify_token_async(cred).await {
+                let err = ContractError::new(
+                    CODE_UNAUTHENTICATED,
+                    "invalid or mismatched credential during initialize",
+                    RetrySpec::never(),
+                    EffectStatus::NotApplied,
+                );
+                send_json_frame(ctrl_tx, &JsonRpcResponse::application_error(req.id, &err)).await;
+                return true;
+            }
         }
+
+        let supported_features: Vec<String> = GATEWAY_FEATURES
+            .iter()
+            .copied()
+            .filter(|feature| params.features.iter().any(|requested| requested == feature))
+            .map(ToOwned::to_owned)
+            .collect();
 
         initialized.store(true, Ordering::SeqCst);
         let meta = state.runtime.store().meta();
@@ -442,11 +622,7 @@ async fn handle_ws_text_frame(
             abi_version: ABI_VERSION,
             supported: true,
             api_version: OPERATION_VERSION.to_owned(),
-            supported_features: vec![
-                "subscriptions".to_owned(),
-                "control-priority".to_owned(),
-                "idempotency".to_owned(),
-            ],
+            supported_features,
             connection_id: conn_id.to_owned(),
             cli: None,
             target: TargetHandshakeInfo {
@@ -483,7 +659,16 @@ async fn handle_ws_text_frame(
 
     match req.method.as_str() {
         WIRE_SUB_OPEN => {
-            handle_sub_open(req, state, subscriptions, ctrl_tx, sub_tx, conn_stop).await;
+            handle_sub_open(
+                req,
+                state,
+                session_credential,
+                subscriptions,
+                ctrl_tx,
+                sub_tx,
+                conn_stop,
+            )
+            .await;
         }
         WIRE_SUB_CREDIT => {
             let params: SubCreditParams = match serde_json::from_value(req.params) {
@@ -502,6 +687,19 @@ async fn handle_ws_text_frame(
                     return false;
                 }
             };
+            let add_amount = u64::from(params.add);
+            if add_amount == 0 || add_amount > MAX_SUBSCRIPTION_CREDIT {
+                let err = ContractError::new(
+                    CODE_INVALID_ARGUMENT,
+                    format!(
+                        "sub.credit `add` must be within 1..={MAX_SUBSCRIPTION_CREDIT}, got {add_amount}"
+                    ),
+                    RetrySpec::never(),
+                    EffectStatus::NotApplied,
+                );
+                send_json_frame(ctrl_tx, &JsonRpcResponse::application_error(req.id, &err)).await;
+                return false;
+            }
             // P2 (wp4 review): clone the shared handles out and drop the map
             // guard before any await — holding it across the response send
             // deadlocked sub.open/sub.close and pump cleanup whenever the
@@ -513,7 +711,38 @@ async fn handle_ws_text_frame(
                     .map(|sub| (sub.credit.clone(), sub.credit_notify.clone()))
             };
             if let Some((credit, credit_notify)) = entry {
-                credit.fetch_add(u64::from(params.add), Ordering::SeqCst);
+                let mut cur = credit.load(Ordering::SeqCst);
+                let accepted = loop {
+                    let Some(next) = cur.checked_add(add_amount) else {
+                        break false;
+                    };
+                    if next > MAX_SUBSCRIPTION_CREDIT {
+                        break false;
+                    }
+                    match credit.compare_exchange_weak(
+                        cur,
+                        next,
+                        Ordering::SeqCst,
+                        Ordering::SeqCst,
+                    ) {
+                        Ok(_) => break true,
+                        Err(actual) => cur = actual,
+                    }
+                };
+                if !accepted {
+                    let err = ContractError::new(
+                        CODE_RESOURCE_LIMIT,
+                        format!(
+                            "subscription `{}` credit exceeds maximum {MAX_SUBSCRIPTION_CREDIT}",
+                            params.subscription_id
+                        ),
+                        RetrySpec::backoff_read(Some(100)),
+                        EffectStatus::NotApplied,
+                    );
+                    send_json_frame(ctrl_tx, &JsonRpcResponse::application_error(req.id, &err))
+                        .await;
+                    return false;
+                }
                 credit_notify.notify_one();
                 send_json_frame(
                     ctrl_tx,
@@ -581,6 +810,7 @@ async fn handle_ws_text_frame(
             let st = state.clone();
             tokio::spawn(async move {
                 let _permit = permit;
+                let _in_flight_guard = in_flight_guard;
                 let parsed: OperationRpcParams = match serde_json::from_value(req.params) {
                     Ok(p) => p,
                     Err(e) => {
@@ -632,6 +862,7 @@ async fn handle_ws_text_frame(
 async fn handle_sub_open(
     req: JsonRpcRequest,
     state: &Arc<PublicV1State>,
+    session_credential: &Option<String>,
     subscriptions: &Arc<Mutex<HashMap<String, ActiveSubscription>>>,
     ctrl_tx: &mpsc::Sender<Message>,
     sub_tx: &mpsc::Sender<Message>,
@@ -748,6 +979,18 @@ async fn handle_sub_open(
     }
 
     let initial_credit = u64::from(params.credit.unwrap_or(DEFAULT_CREDIT));
+    if initial_credit > MAX_SUBSCRIPTION_CREDIT {
+        let err = ContractError::new(
+            CODE_INVALID_ARGUMENT,
+            format!(
+                "sub.open `credit` must not exceed {MAX_SUBSCRIPTION_CREDIT}, got {initial_credit}"
+            ),
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        );
+        send_json_frame(ctrl_tx, &JsonRpcResponse::application_error(req.id, &err)).await;
+        return;
+    }
 
     // t015: the source factory owns the stream's start-position validation
     // (`run.events`: `check_run_subscription_start`, with the -32000
@@ -766,6 +1009,26 @@ async fn handle_sub_open(
             return;
         }
     };
+    let credit = Arc::new(AtomicU64::new(initial_credit));
+    let credit_notify = Arc::new(Notify::new());
+    let (cancel_tx, cancel_rx) = watch::channel(false);
+
+    // Register subscription BEFORE sending OK frame so a concurrent `server_stop`
+    // cancellation cannot leave an orphaned un-tracked subscription on client.
+    subscriptions.lock().await.insert(
+        sub_id.clone(),
+        ActiveSubscription {
+            credit: credit.clone(),
+            credit_notify: credit_notify.clone(),
+            cancel_tx,
+        },
+    );
+    let mut reg_guard = SubRegistrationGuard {
+        subs: subscriptions.clone(),
+        sub_id: sub_id.clone(),
+        armed: true,
+    };
+
     let open_res = SubOpenResult {
         subscription_id: sub_id.clone(),
     };
@@ -778,21 +1041,13 @@ async fn handle_sub_open(
     )
     .await;
 
-    let credit = Arc::new(AtomicU64::new(initial_credit));
-    let credit_notify = Arc::new(Notify::new());
-    let (cancel_tx, cancel_rx) = watch::channel(false);
-
-    subscriptions.lock().await.insert(
-        sub_id.clone(),
-        ActiveSubscription {
-            credit: credit.clone(),
-            credit_notify: credit_notify.clone(),
-            cancel_tx,
-        },
-    );
-
+    reg_guard.armed = false;
+    let revocation_rx = state.subscribe_auth_revocation();
     tokio::spawn(subscription_pump(
         subscriptions.clone(),
+        state.clone(),
+        session_credential.clone(),
+        revocation_rx,
         ctrl_tx.clone(),
         sub_tx.clone(),
         sub_id,
@@ -1020,6 +1275,9 @@ impl StreamSource for RunEventsSource {
 #[allow(clippy::too_many_arguments)]
 async fn subscription_pump(
     pump_subs: Arc<Mutex<HashMap<String, ActiveSubscription>>>,
+    state: Arc<PublicV1State>,
+    session_credential: Option<String>,
+    mut revocation_rx: watch::Receiver<u64>,
     pump_ctrl: mpsc::Sender<Message>,
     pump_sub: mpsc::Sender<Message>,
     sub_id: String,
@@ -1033,17 +1291,39 @@ async fn subscription_pump(
     let mut buffer: VecDeque<StreamFrame> = VecDeque::new();
     let mut buffer_bytes: usize = 0;
     let event_notify = source.wake();
-    // P1 (WP5 e2e): a fetch that returned a full batch does NOT mean the
-    // history is exhausted — `completed` (which certifies "all events
-    // delivered") may only fire when the last fetch came up short. The old
-    // `buffer.is_empty() && terminal_reached` check sent `completed` right
-    // after the first capped batch whenever the run was already terminal,
-    // silently skipping every event beyond it — reachable through the
-    // documented snapshot -> resubscribe recovery on a finished run.
     let fetch_batch = 256usize;
     let mut fetched_full_batch;
 
+    // Force initial borrow sync so subsequent `.changed()` fires strictly on new updates,
+    // while checking current credential validity up front.
+    let _ = revocation_rx.borrow_and_update();
+
     'pump: loop {
+        // Active session credential revocation check before each batch/poll.
+        let cred_valid = match session_credential.as_deref() {
+            Some(c) => state.verify_token_async(c).await,
+            None => false,
+        };
+        if !cred_valid {
+            buffer.clear();
+            let err = ContractError::new(
+                CODE_UNAUTHENTICATED,
+                "credential rejected: access key is no longer active",
+                RetrySpec::never(),
+                EffectStatus::NotApplied,
+            );
+            send_sub_end(
+                &pump_ctrl,
+                &sub_id,
+                SubTerminal::Error,
+                last_sent_cursor,
+                None,
+                Some(err),
+            )
+            .await;
+            break;
+        }
+
         if *cancel_rx.borrow() || *pump_conn_stop.borrow() {
             let term = if *pump_conn_stop.borrow() {
                 SubTerminal::Shutdown
@@ -1054,7 +1334,13 @@ async fn subscription_pump(
             break;
         }
 
-        let notified = event_notify.notified();
+        let event_notified = event_notify.notified();
+        tokio::pin!(event_notified);
+        event_notified.as_mut().enable();
+        let credit_notified = credit_notify.notified();
+        tokio::pin!(credit_notified);
+        credit_notified.as_mut().enable();
+
         let terminal_reached;
         match source.fetch_next(fetch_batch) {
             Ok(fetch) => {
@@ -1083,26 +1369,14 @@ async fn subscription_pump(
         while credit.load(Ordering::SeqCst) > 0
             && let Some(frame) = buffer.front()
         {
-            // Skip marker for a frame whose notification failed to serialize
-            // (structurally unreachable for the built-in sources).
             if frame.text.is_empty() {
                 let frame_bytes = frame.estimated_bytes;
                 let _ = buffer.pop_front();
                 buffer_bytes = buffer_bytes.saturating_sub(frame_bytes);
                 continue;
             }
-            // P1-B (wp4fix review): a single serialized event can exceed the
-            // wire frame budget; ending the subscription with an error (and
-            // the last delivered cursor) beats sending a frame the peer would
-            // have to drop. `break 'pump` — the plain `break` only left this
-            // delivery loop, leaving the oversized event at the buffer head
-            // so the outer loop re-serialized it and emitted one
-            // `sub.end(error)` per iteration forever.
             if frame.text.len() > MAX_FRAME_BYTES {
                 let err = ContractError::new(
-                    // 007 §6.1 fixes this wire-visible code for oversized
-                    // outbound events; the CLI stdio segment already uses it
-                    // (wp4fix2 review P2).
                     "INPUT_TOO_LARGE",
                     format!(
                         "event {} exceeds the {MAX_FRAME_BYTES} byte frame limit; {}",
@@ -1112,14 +1386,12 @@ async fn subscription_pump(
                     RetrySpec::backoff_read(Some(250)),
                     EffectStatus::NotApplied,
                 );
-                // The error terminal rides the event lane (like Completed):
-                // the biased ctrl lane would let it overtake this
-                // subscription's already-queued `sub.event` frames, and
-                // consumers that stop at `sub.end` would lose them
-                // (wp4fix2 review P2). The oversized event is dropped either
-                // way, so the lane switch cannot strand data.
-                send_sub_end(
+                let _ = buffer.pop_front();
+                send_sub_end_bounded(
                     &pump_sub,
+                    &pump_ctrl,
+                    &mut cancel_rx,
+                    &mut pump_conn_stop,
                     &sub_id,
                     SubTerminal::Error,
                     last_sent_cursor.clone(),
@@ -1127,8 +1399,6 @@ async fn subscription_pump(
                     Some(err),
                 )
                 .await;
-                // Drop the oversized event so nothing re-delivers it on exit.
-                let _ = buffer.pop_front();
                 break 'pump;
             }
             match pump_sub.try_send(Message::Text(frame.text.clone().into())) {
@@ -1140,24 +1410,17 @@ async fn subscription_pump(
                     buffer_bytes = buffer_bytes.saturating_sub(frame_bytes);
                 }
                 Err(mpsc::error::TrySendError::Full(_)) => break,
-                // Same cleanup as every other exit: a plain `return` used to
-                // skip the subscription-map removal below and leak the entry
-                // against `MAX_SUBSCRIPTIONS`.
                 Err(mpsc::error::TrySendError::Closed(_)) => break 'pump,
             }
         }
 
-        // Slow consumer guard (T6): disconnect only slow subscriber once pending backlog crosses limit.
-        // The terminal rides the EVENT lane like `completed`: the control
-        // lane would let it overtake this subscription's already-queued
-        // `sub.event` frames, and the peer's tombstone then drops that
-        // in-flight tail (the WP5 e2e lost a contiguous sub-lane block every
-        // slow-consumer cycle through exactly that ordering). The
-        // `resumeCursor` covers the queued events, so a consumer that
-        // re-subscribes from it loses nothing either way.
         if buffer.len() > SUBSCRIPTION_BUFFER_ITEMS || buffer_bytes > SUBSCRIPTION_BUFFER_BYTES {
-            send_sub_end(
+            buffer.clear();
+            send_sub_end_bounded(
                 &pump_sub,
+                &pump_ctrl,
+                &mut cancel_rx,
+                &mut pump_conn_stop,
                 &sub_id,
                 SubTerminal::SlowConsumer,
                 last_sent_cursor,
@@ -1169,19 +1432,11 @@ async fn subscription_pump(
         }
 
         if buffer.is_empty() && terminal_reached && !fetched_full_batch {
-            // 007 §6.4 (`completed`: 事件全部送达): the Completed terminal
-            // is relayed on the same event lane as this subscription's
-            // `sub.event` frames. The writer's biased control priority
-            // would otherwise let a ctrl-lane `sub.end` overtake events
-            // already queued for this subscription, so consumers that stop
-            // at `sub.end` (run events --follow, api connect
-            // replay) would drop the tail (wire-order bug found by the
-            // WP3 client work, 2026-11-17). Locally synthesized
-            // terminals (slow consumer, close, shutdown, error, gap at
-            // open) keep the ctrl lane so they can jump a saturated
-            // event lane.
-            send_sub_end(
+            send_sub_end_bounded(
                 &pump_sub,
+                &pump_ctrl,
+                &mut cancel_rx,
+                &mut pump_conn_stop,
                 &sub_id,
                 SubTerminal::Completed,
                 last_sent_cursor,
@@ -1193,22 +1448,18 @@ async fn subscription_pump(
         }
 
         tokio::select! {
-            _ = notified => {}
-            _ = credit_notify.notified() => {}
+            _ = event_notified => {}
+            _ = credit_notified => {}
+            _ = revocation_rx.changed() => {
+                // Loop immediately so the credential re-check runs on wake.
+            }
             changed = cancel_rx.changed() => {
                 if changed.is_err() {
-                    // P1 (wp4 review): the subscription entry (and its cancel
-                    // sender) was removed without signalling — a failed poll
-                    // resolves immediately, so treating it as "keep looping"
-                    // busy-spun on the store mutex.
                     break;
                 }
             }
             changed = pump_conn_stop.changed() => {
                 if changed.is_err() {
-                    // P1 (wp4 review): the connection task was aborted without
-                    // signalling stop — exit with a best-effort frame instead
-                    // of busy-spinning.
                     send_sub_end(
                         &pump_ctrl,
                         &sub_id,
@@ -1226,6 +1477,53 @@ async fn subscription_pump(
     }
 
     pump_subs.lock().await.remove(&sub_id);
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn send_sub_end_bounded(
+    primary_tx: &mpsc::Sender<Message>,
+    ctrl_fallback_tx: &mpsc::Sender<Message>,
+    cancel_rx: &mut watch::Receiver<bool>,
+    conn_stop_rx: &mut watch::Receiver<bool>,
+    subscription_id: &str,
+    terminal: SubTerminal,
+    resume_cursor: Option<String>,
+    gap: Option<agentcpm_pd_protocol::contract::GapFrame>,
+    error: Option<ContractError>,
+) {
+    let notif = JsonRpcNotification {
+        jsonrpc: JSONRPC_VERSION.to_owned(),
+        method: WIRE_SUB_END.to_owned(),
+        params: serde_json::to_value(SubEndNotification {
+            subscription_id: subscription_id.to_owned(),
+            terminal,
+            resume_cursor,
+            gap,
+            error,
+        })
+        .unwrap_or(Value::Null),
+    };
+    let Ok(txt) = serde_json::to_string(&notif) else {
+        return;
+    };
+    let msg = Message::Text(txt.into());
+    if primary_tx.try_send(msg.clone()).is_ok() {
+        return;
+    }
+    tokio::select! {
+        biased;
+        _ = cancel_rx.changed() => {
+            let _ = ctrl_fallback_tx.try_send(msg);
+        }
+        _ = conn_stop_rx.changed() => {
+            let _ = ctrl_fallback_tx.try_send(msg);
+        }
+        res = tokio::time::timeout(Duration::from_millis(200), primary_tx.send(msg.clone())) => {
+            if !matches!(res, Ok(Ok(()))) {
+                let _ = ctrl_fallback_tx.try_send(msg);
+            }
+        }
+    }
 }
 
 fn estimate_event_bytes(ev: &StoredEvent) -> usize {
@@ -1388,6 +1686,9 @@ mod tests {
             .expect("run.events source starts");
         let pump = tokio::spawn(subscription_pump(
             subscriptions.clone(),
+            state.clone(),
+            Some("test-token".to_owned()),
+            state.subscribe_auth_revocation(),
             ctrl_tx,
             sub_tx,
             sub_id.clone(),
@@ -1511,6 +1812,9 @@ mod tests {
             .expect("run.events source starts");
         let pump = tokio::spawn(subscription_pump(
             subscriptions.clone(),
+            state.clone(),
+            Some("test-token".to_owned()),
+            state.subscribe_auth_revocation(),
             ctrl_tx.clone(),
             sub_tx.clone(),
             sub_id.clone(),
@@ -1650,6 +1954,9 @@ mod tests {
             .expect("run.events source starts");
         let pump = tokio::spawn(subscription_pump(
             subscriptions.clone(),
+            state.clone(),
+            Some("test-token".to_owned()),
+            state.subscribe_auth_revocation(),
             ctrl_tx.clone(),
             sub_tx.clone(),
             sub_id.clone(),
@@ -1707,5 +2014,285 @@ mod tests {
             subscriptions.lock().await.get(&sub_id).is_none(),
             "the subscription entry is removed"
         );
+    }
+
+    #[tokio::test]
+    async fn handle_ws_text_frame_enforces_credential_initialize_version_inflight_and_credit_rules()
+    {
+        let tmp = TempDir::new("ws-frame-rules");
+        let root_dir = tmp.0.join("pd-home");
+        initialize_instance(&root_dir, None, Some("local"), Some(true)).unwrap();
+        let (file, token) = load_local_instance_and_token(&root_dir, None).unwrap();
+        let meta = InstanceMeta {
+            instance_id: file.instance_id.clone(),
+            owner_id: file.owner_id.clone(),
+            product: file.product.clone(),
+            protocol_version: file.protocol_version.clone(),
+            node_id: file.node_id.clone(),
+            generation: "gen-test-ws".to_owned(),
+            server_revision: "srv-test-ws".to_owned(),
+            initialization_revision: file.initialization_revision.clone(),
+        };
+        let store = V1Store::open_and_recover(&root_dir, meta).unwrap();
+        let runtime = PublicV1Runtime::new(store);
+        let state = Arc::new(PublicV1State::new(runtime, token.clone()));
+        let initialized = Arc::new(AtomicBool::new(false));
+        let control_sem = Arc::new(Semaphore::new(MAX_CONTROL_PENDING));
+        let normal_sem = Arc::new(Semaphore::new(MAX_PENDING));
+        let in_flight_ids: Arc<StdMutex<HashSet<String>>> = Arc::default();
+        let subscriptions: Arc<Mutex<HashMap<String, ActiveSubscription>>> = Arc::default();
+        let (ctrl_tx, mut ctrl_rx) = mpsc::channel(16);
+        let (norm_tx, _norm_rx) = mpsc::channel(16);
+        let (sub_tx, _sub_rx) = mpsc::channel(16);
+        let (_conn_stop_tx, conn_stop) = watch::channel(false);
+
+        // 1) Missing session credential fails closed BEFORE JSON parsing.
+        let close = handle_ws_text_frame(
+            "{not json",
+            &state,
+            "conn-1",
+            &None,
+            &initialized,
+            &control_sem,
+            &normal_sem,
+            &in_flight_ids,
+            &subscriptions,
+            &ctrl_tx,
+            &norm_tx,
+            &sub_tx,
+            &conn_stop,
+        )
+        .await;
+        assert!(close, "missing session credential must force close");
+        let Message::Text(unauth_txt) = ctrl_rx.recv().await.unwrap() else {
+            panic!("expected UNAUTHENTICATED text frame");
+        };
+        let unauth: Value = serde_json::from_str(&unauth_txt).unwrap();
+        assert_eq!(unauth["error"]["data"]["code"], CODE_UNAUTHENTICATED);
+
+        // 2) Unsupported abiVersion returns -32006 with data.supported.
+        let bad_ver = json!({
+            "jsonrpc": "2.0",
+            "id": "init-bad-ver",
+            "method": "initialize",
+            "params": {
+                "abi_version": 999,
+                "api_version": OPERATION_VERSION,
+                "client": {"name": "test", "version": "1.0"}
+            }
+        })
+        .to_string();
+        let close = handle_ws_text_frame(
+            &bad_ver,
+            &state,
+            "conn-1",
+            &Some(token.clone()),
+            &initialized,
+            &control_sem,
+            &normal_sem,
+            &in_flight_ids,
+            &subscriptions,
+            &ctrl_tx,
+            &norm_tx,
+            &sub_tx,
+            &conn_stop,
+        )
+        .await;
+        assert!(!close);
+        let Message::Text(resp_txt) = ctrl_rx.recv().await.unwrap() else {
+            panic!("expected text frame");
+        };
+        let resp: Value = serde_json::from_str(&resp_txt).unwrap();
+        assert_eq!(resp["error"]["code"], ERR_UNSUPPORTED_VERSION);
+        assert_eq!(resp["error"]["data"]["supported"], json!([ABI_VERSION]));
+
+        // 3) initialize.credential mismatch against HTTP upgrade bearer forces disconnect.
+        let bad_cred = json!({
+            "jsonrpc": "2.0",
+            "id": "init-bad-cred",
+            "method": "initialize",
+            "params": {
+                "abi_version": ABI_VERSION,
+                "api_version": OPERATION_VERSION,
+                "credential": "wrong-credential",
+                "client": {"name": "test", "version": "1.0"}
+            }
+        })
+        .to_string();
+        let close = handle_ws_text_frame(
+            &bad_cred,
+            &state,
+            "conn-1",
+            &Some(token.clone()),
+            &initialized,
+            &control_sem,
+            &normal_sem,
+            &in_flight_ids,
+            &subscriptions,
+            &ctrl_tx,
+            &norm_tx,
+            &sub_tx,
+            &conn_stop,
+        )
+        .await;
+        assert!(close, "mismatched initialize credential must force close");
+        assert!(!initialized.load(Ordering::SeqCst));
+        let Message::Text(resp_txt) = ctrl_rx.recv().await.unwrap() else {
+            panic!("expected text frame");
+        };
+        let resp: Value = serde_json::from_str(&resp_txt).unwrap();
+        assert_eq!(resp["error"]["data"]["code"], CODE_UNAUTHENTICATED);
+
+        // 4) Valid initialize succeeds and filters features to GATEWAY_FEATURES intersection.
+        let ok_init = json!({
+            "jsonrpc": "2.0",
+            "id": "init-ok",
+            "method": "initialize",
+            "params": {
+                "abi_version": ABI_VERSION,
+                "api_version": OPERATION_VERSION,
+                "credential": token,
+                "features": ["subscriptions", "nonexistent-feature", "heartbeat"],
+                "client": {"name": "test", "version": "1.0"}
+            }
+        })
+        .to_string();
+        let close = handle_ws_text_frame(
+            &ok_init,
+            &state,
+            "conn-1",
+            &Some(token.clone()),
+            &initialized,
+            &control_sem,
+            &normal_sem,
+            &in_flight_ids,
+            &subscriptions,
+            &ctrl_tx,
+            &norm_tx,
+            &sub_tx,
+            &conn_stop,
+        )
+        .await;
+        assert!(!close);
+        assert!(initialized.load(Ordering::SeqCst));
+        let Message::Text(resp_txt) = ctrl_rx.recv().await.unwrap() else {
+            panic!("expected text frame");
+        };
+        let resp: Value = serde_json::from_str(&resp_txt).unwrap();
+        assert_eq!(
+            resp["result"]["supported_features"],
+            json!(["subscriptions", "heartbeat"])
+        );
+
+        // 5) Repeat initialize on an already initialized connection is rejected with -32600.
+        let repeat_init = json!({
+            "jsonrpc": "2.0",
+            "id": "init-repeat",
+            "method": "initialize",
+            "params": {
+                "abi_version": ABI_VERSION,
+                "api_version": OPERATION_VERSION,
+                "client": {"name": "test", "version": "1.0"}
+            }
+        })
+        .to_string();
+        let close = handle_ws_text_frame(
+            &repeat_init,
+            &state,
+            "conn-1",
+            &Some(token.clone()),
+            &initialized,
+            &control_sem,
+            &normal_sem,
+            &in_flight_ids,
+            &subscriptions,
+            &ctrl_tx,
+            &norm_tx,
+            &sub_tx,
+            &conn_stop,
+        )
+        .await;
+        assert!(!close);
+        let Message::Text(resp_txt) = ctrl_rx.recv().await.unwrap() else {
+            panic!("expected text frame");
+        };
+        let resp: Value = serde_json::from_str(&resp_txt).unwrap();
+        assert_eq!(resp["error"]["code"], JSONRPC_INVALID_REQUEST);
+
+        // 6) Duplicate in-flight requestId returns -32600 without affecting existing in-flight entry.
+        in_flight_ids
+            .lock()
+            .expect("mutex")
+            .insert("req-inflight".to_owned());
+        let dup_req = json!({
+            "jsonrpc": "2.0",
+            "id": "req-inflight",
+            "method": "system.capabilities",
+            "params": {}
+        })
+        .to_string();
+        let close = handle_ws_text_frame(
+            &dup_req,
+            &state,
+            "conn-1",
+            &Some(token.clone()),
+            &initialized,
+            &control_sem,
+            &normal_sem,
+            &in_flight_ids,
+            &subscriptions,
+            &ctrl_tx,
+            &norm_tx,
+            &sub_tx,
+            &conn_stop,
+        )
+        .await;
+        assert!(!close);
+        assert!(
+            in_flight_ids
+                .lock()
+                .expect("mutex")
+                .contains("req-inflight")
+        );
+        let Message::Text(resp_txt) = ctrl_rx.recv().await.unwrap() else {
+            panic!("expected text frame");
+        };
+        let resp: Value = serde_json::from_str(&resp_txt).unwrap();
+        assert_eq!(resp["error"]["code"], JSONRPC_INVALID_REQUEST);
+
+        // 7) Excessive sub.open credit is rejected with INVALID_ARGUMENT.
+        let over_credit = json!({
+            "jsonrpc": "2.0",
+            "id": "sub-too-high",
+            "method": "sub.open",
+            "params": {
+                "stream": "run.events",
+                "input": {"runId": "missing"},
+                "credit": MAX_SUBSCRIPTION_CREDIT + 1
+            }
+        })
+        .to_string();
+        let close = handle_ws_text_frame(
+            &over_credit,
+            &state,
+            "conn-1",
+            &Some(token),
+            &initialized,
+            &control_sem,
+            &normal_sem,
+            &in_flight_ids,
+            &subscriptions,
+            &ctrl_tx,
+            &norm_tx,
+            &sub_tx,
+            &conn_stop,
+        )
+        .await;
+        assert!(!close);
+        let Message::Text(resp_txt) = ctrl_rx.recv().await.unwrap() else {
+            panic!("expected text frame");
+        };
+        let resp: Value = serde_json::from_str(&resp_txt).unwrap();
+        assert_eq!(resp["error"]["data"]["code"], CODE_INVALID_ARGUMENT);
     }
 }

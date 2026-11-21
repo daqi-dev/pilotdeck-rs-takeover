@@ -3,7 +3,7 @@
 
 use std::fs::{self, OpenOptions};
 use std::future::Future;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -12,22 +12,26 @@ use std::time::{Duration, Instant};
 
 use agentcpm_pd_protocol::contract::OPERATION_VERSION;
 use agentcpm_pd_protocol::errors::{
-    CODE_ALREADY_EXISTS, CODE_FORBIDDEN, CODE_INSTANCE_MISMATCH, CODE_INVALID_ARGUMENT,
-    CODE_NOT_FOUND, CODE_UNAVAILABLE, ContractError, EffectStatus, RetrySpec,
+    CODE_ALREADY_EXISTS, CODE_INSTANCE_MISMATCH, CODE_INVALID_ARGUMENT, CODE_NOT_FOUND,
+    CODE_UNAVAILABLE, ContractError, EffectStatus, RetrySpec,
 };
-use agentcpm_pd_protocol::id::{IdGenerator, NodeId};
+use agentcpm_pd_protocol::id::{IdGenerator, NodeId, generate_csprng_token_hex};
 use chrono::Utc;
+use rusqlite::{OpenFlags, params};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
 use tokio::net::TcpListener;
-use tokio::sync::{oneshot, watch};
+use tokio::sync::{Semaphore, oneshot, watch};
 
 use crate::acceptor;
 use crate::http_proxy;
 use crate::public_v1::PublicV1State;
 use crate::public_v1::runtime::PublicV1Runtime;
 use crate::public_v1::store::{InstanceMeta, V1Store};
+
+const MAX_V1_CONNECTIONS: usize = 64;
+const CODE_ACTIVE_RESOURCES: &str = "ACTIVE_RESOURCES";
+const CODE_STOP_FAILED: &str = "STOP_FAILED";
 
 static BOOT_SEQ: AtomicU64 = AtomicU64::new(0);
 
@@ -140,7 +144,14 @@ pub fn atomic_write_file(path: &Path, bytes: &[u8], secret: bool) -> Result<(), 
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(&tmp, fs::Permissions::from_mode(mode));
+        fs::set_permissions(&tmp, fs::Permissions::from_mode(mode)).map_err(|e| {
+            ContractError::new(
+                CODE_UNAVAILABLE,
+                format!("chmod temp file {}: {e}", tmp.display()),
+                RetrySpec::never(),
+                EffectStatus::NotApplied,
+            )
+        })?;
     }
 
     fs::rename(&tmp, path).map_err(|e| {
@@ -246,20 +257,22 @@ pub fn initialize_instance(
     if let Err(error) = atomic_write_file(
         &local_json,
         &serde_json::to_vec_pretty(&meta_file).unwrap_or_default(),
-        false,
+        true,
     ) {
         cleanup_partial_init(false);
         return Err(error);
     }
 
-    // Generate cryptographically hashed random bearer token without logging or exposing it.
-    let mut token_hasher = Sha256::new();
-    token_hasher.update(instance_id.as_bytes());
-    token_hasher.update(owner_id.as_bytes());
-    token_hasher.update(id_gen.next_id().as_bytes());
-    token_hasher.update(now.as_bytes());
-    token_hasher.update(std::process::id().to_le_bytes());
-    let token_hex = format!("{:x}", token_hasher.finalize());
+    // Generate cryptographically random 256-bit OS CSPRNG bearer token without logging or exposing it.
+    let token_hex = generate_csprng_token_hex().map_err(|e| {
+        cleanup_partial_init(true);
+        ContractError::new(
+            CODE_UNAVAILABLE,
+            format!("generate CSPRNG local.token: {e}"),
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        )
+    })?;
     if let Err(error) = atomic_write_file(&local_token, token_hex.as_bytes(), true) {
         cleanup_partial_init(true);
         return Err(error);
@@ -374,7 +387,7 @@ pub fn inspect_service_status(
             EffectStatus::NotApplied,
         )
     })?;
-    if !is_pid_alive(ready.pid) {
+    if !is_pid_alive(ready.pid) || !is_gateway_lock_held(data_root) {
         return Ok(json!({
             "pid": Value::Null,
             "identity": Value::Null,
@@ -413,7 +426,27 @@ pub fn stop_local_service(
     mode: &str,
     timeout_ms: u64,
 ) -> Result<Value, ContractError> {
-    let (file, _) = load_local_instance_and_token(data_root, expected_instance_id)?;
+    if !matches!(mode, "idle" | "drain" | "cancel") {
+        return Err(ContractError::new(
+            CODE_INVALID_ARGUMENT,
+            format!("unsupported service.stop mode `{mode}` (expected idle, drain, or cancel)"),
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        ));
+    }
+    if timeout_ms == 0 {
+        return Err(ContractError::new(
+            CODE_INVALID_ARGUMENT,
+            "timeoutMs must be >= 1",
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        ));
+    }
+    let deadline = Instant::now()
+        .checked_add(Duration::from_millis(timeout_ms.max(100)))
+        .unwrap_or_else(|| Instant::now() + Duration::from_secs(24 * 60 * 60));
+
+    let (file, token) = load_local_instance_and_token(data_root, expected_instance_id)?;
     let ready_path = data_root.join("run").join("ready.json");
     if !ready_path.exists() {
         return Ok(json!({
@@ -440,9 +473,6 @@ pub fn stop_local_service(
             EffectStatus::NotApplied,
         )
     })?;
-    // P2 (wp4 review): never signal a pid from a ready.json that belongs to
-    // a different instance — a stale foreign file used to make stop SIGTERM
-    // an unrelated (possibly pid-reused) process.
     if ready.instance_id != file.instance_id {
         return Err(ContractError::instance_mismatch(
             &file.instance_id,
@@ -450,7 +480,9 @@ pub fn stop_local_service(
         ));
     }
 
-    if !is_pid_alive(ready.pid) {
+    // Verify BOTH PID liveness and `gateway.instance.lock` ownership so a stale
+    // ready.json after SIGKILL never signals an OS-reused unrelated PID.
+    if !is_pid_alive(ready.pid) || !is_gateway_lock_held(data_root) {
         let _ = fs::remove_file(&ready_path);
         return Ok(json!({
             "stopped": true,
@@ -462,26 +494,50 @@ pub fn stop_local_service(
     }
 
     if mode == "idle" {
-        // Check SQLite for active runs; refuse stopping idle if active runs
-        // exist unless cancel/drain. A read failure must not degrade into
-        // "no active runs" (P2 wp4 review).
-        let active_count = count_non_terminal_runs_readonly(data_root)?;
-        if active_count > 0 {
+        let active = inspect_active_resources_readonly(data_root, &ready.generation)?;
+        if !active.is_empty() {
             return Err(ContractError::new(
-                CODE_FORBIDDEN,
+                CODE_ACTIVE_RESOURCES,
                 format!(
-                    "refusing service stop in mode=idle while {active_count} run(s) are active; use --mode cancel or --mode drain"
+                    "refusing service stop in mode=idle while {} run(s), {} operation(s), and {} terminal(s) are active; use --mode cancel or --mode drain",
+                    active.run_ids.len(),
+                    active.operation_ids.len(),
+                    active.terminal_ids.len(),
                 ),
-                RetrySpec::never(),
+                RetrySpec::after_reconcile(),
                 EffectStatus::NotApplied,
             ));
         }
+        signal_term(ready.pid)?;
+        while Instant::now() < deadline {
+            if !is_pid_alive(ready.pid) {
+                let _ = fs::remove_file(&ready_path);
+                return Ok(json!({
+                    "stopped": true,
+                    "remainingRunIds": [],
+                    "remainingOperationIds": [],
+                    "remainingTerminalIds": [],
+                    "stopState": "stopped",
+                }));
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        let active =
+            inspect_active_resources_readonly(data_root, &ready.generation).unwrap_or_default();
+        return Ok(json!({
+            "stopped": false,
+            "remainingRunIds": active.run_ids,
+            "remainingOperationIds": active.operation_ids,
+            "remainingTerminalIds": active.terminal_ids,
+            "stopState": "timeout",
+        }));
     }
 
-    let _ = file;
-    signal_term(ready.pid)?;
+    // `drain` or `cancel`: instruct the running gateway over its authenticated
+    // internal control endpoint before signaling exit.
+    send_internal_stop_command(&ready, &token, mode, deadline)?;
 
-    let deadline = Instant::now() + Duration::from_millis(timeout_ms.max(100));
+    let mut term_sent = false;
     while Instant::now() < deadline {
         if !is_pid_alive(ready.pid) {
             let _ = fs::remove_file(&ready_path);
@@ -493,95 +549,281 @@ pub fn stop_local_service(
                 "stopState": "stopped",
             }));
         }
+        if !term_sent {
+            let active = inspect_active_resources_readonly(data_root, &ready.generation)?;
+            if active.is_empty() {
+                signal_term(ready.pid)?;
+                term_sent = true;
+            }
+        }
         std::thread::sleep(Duration::from_millis(25));
     }
 
-    // Timeout MUST NOT report `stopped: true` (`public-contract.json` runtime
-    // invariant) and reports the runs that are still not terminal.
-    let remaining_run_ids = non_terminal_run_ids_readonly(data_root).unwrap_or_default();
+    let active =
+        inspect_active_resources_readonly(data_root, &ready.generation).unwrap_or_default();
     Ok(json!({
         "stopped": false,
-        "remainingRunIds": remaining_run_ids,
-        "remainingOperationIds": [],
-        "remainingTerminalIds": [],
+        "remainingRunIds": active.run_ids,
+        "remainingOperationIds": active.operation_ids,
+        "remainingTerminalIds": active.terminal_ids,
         "stopState": "timeout",
     }))
 }
 
-fn count_non_terminal_runs_readonly(data_root: &Path) -> Result<usize, ContractError> {
-    let db_path = data_root.join("v1").join("state.sqlite");
-    if !db_path.exists() {
-        return Ok(0);
-    }
-    let conn = rusqlite::Connection::open(&db_path).map_err(|e| {
-        ContractError::new(
-            CODE_UNAVAILABLE,
-            format!("open sqlite: {e}"),
-            RetrySpec::never(),
-            EffectStatus::NotApplied,
-        )
-    })?;
-    // P2 (wp4 review): a failed read must not degrade into "no active runs".
-    let count: i64 = conn
-        .query_row("SELECT COUNT(*) FROM runs WHERE terminal = 0", [], |r| {
-            r.get(0)
-        })
-        .map_err(|e| {
-            ContractError::new(
-                CODE_UNAVAILABLE,
-                format!("count runs: {e}"),
-                RetrySpec::never(),
-                EffectStatus::NotApplied,
-            )
-        })?;
-    Ok(count.max(0) as usize)
+#[derive(Default)]
+struct ActiveResources {
+    run_ids: Vec<String>,
+    operation_ids: Vec<String>,
+    terminal_ids: Vec<String>,
 }
 
-/// The non-terminal run ids, for `service.stop` timeout receipts (best
-/// effort — an unreadable store yields an empty list, not a failed stop).
-fn non_terminal_run_ids_readonly(data_root: &Path) -> Result<Vec<String>, ContractError> {
+impl ActiveResources {
+    fn is_empty(&self) -> bool {
+        self.run_ids.is_empty() && self.operation_ids.is_empty() && self.terminal_ids.is_empty()
+    }
+}
+
+fn inspect_active_resources_readonly(
+    data_root: &Path,
+    generation: &str,
+) -> Result<ActiveResources, ContractError> {
     let db_path = data_root.join("v1").join("state.sqlite");
     if !db_path.exists() {
-        return Ok(Vec::new());
+        return Ok(ActiveResources::default());
     }
-    let conn = rusqlite::Connection::open(&db_path).map_err(|e| {
+    let conn = rusqlite::Connection::open_with_flags(
+        &db_path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(|e| {
         ContractError::new(
             CODE_UNAVAILABLE,
-            format!("open sqlite: {e}"),
+            format!("open sqlite readonly: {e}"),
             RetrySpec::never(),
             EffectStatus::NotApplied,
         )
     })?;
-    let mut stmt = conn
-        .prepare("SELECT run_id FROM runs WHERE terminal = 0")
+    conn.busy_timeout(Duration::from_millis(5000))
         .map_err(|e| {
             ContractError::new(
                 CODE_UNAVAILABLE,
-                format!("query runs: {e}"),
+                format!("sqlite busy_timeout: {e}"),
                 RetrySpec::never(),
                 EffectStatus::NotApplied,
             )
         })?;
-    let ids = stmt
-        .query_map([], |r| r.get(0))
+
+    let table_exists = |name: &str| -> Result<bool, ContractError> {
+        conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
+            params![name],
+            |r| r.get::<_, i64>(0),
+        )
+        .map(|v| v != 0)
         .map_err(|e| {
             ContractError::new(
                 CODE_UNAVAILABLE,
-                format!("query runs: {e}"),
+                format!("query sqlite_master `{name}`: {e}"),
                 RetrySpec::never(),
                 EffectStatus::NotApplied,
             )
-        })?
-        .collect::<Result<Vec<String>, _>>()
-        .map_err(|e| {
-            ContractError::new(
-                CODE_UNAVAILABLE,
-                format!("query runs: {e}"),
-                RetrySpec::never(),
-                EffectStatus::NotApplied,
+        })
+    };
+
+    let run_ids = if table_exists("runs")? {
+        let mut stmt = conn
+            .prepare("SELECT run_id FROM runs WHERE terminal = 0 ORDER BY rowid ASC")
+            .map_err(|e| {
+                ContractError::new(
+                    CODE_UNAVAILABLE,
+                    format!("query active runs: {e}"),
+                    RetrySpec::never(),
+                    EffectStatus::NotApplied,
+                )
+            })?;
+        stmt.query_map([], |r| r.get(0))
+            .map_err(|e| {
+                ContractError::new(
+                    CODE_UNAVAILABLE,
+                    format!("query active runs: {e}"),
+                    RetrySpec::never(),
+                    EffectStatus::NotApplied,
+                )
+            })?
+            .collect::<Result<Vec<String>, _>>()
+            .map_err(|e| {
+                ContractError::new(
+                    CODE_UNAVAILABLE,
+                    format!("collect active runs: {e}"),
+                    RetrySpec::never(),
+                    EffectStatus::NotApplied,
+                )
+            })?
+    } else {
+        Vec::new()
+    };
+
+    let operation_ids = if table_exists("operations")? {
+        let mut stmt = conn
+            .prepare("SELECT operation_id FROM operations WHERE terminal = 0 ORDER BY rowid ASC")
+            .map_err(|e| {
+                ContractError::new(
+                    CODE_UNAVAILABLE,
+                    format!("query active operations: {e}"),
+                    RetrySpec::never(),
+                    EffectStatus::NotApplied,
+                )
+            })?;
+        stmt.query_map([], |r| r.get(0))
+            .map_err(|e| {
+                ContractError::new(
+                    CODE_UNAVAILABLE,
+                    format!("query active operations: {e}"),
+                    RetrySpec::never(),
+                    EffectStatus::NotApplied,
+                )
+            })?
+            .collect::<Result<Vec<String>, _>>()
+            .map_err(|e| {
+                ContractError::new(
+                    CODE_UNAVAILABLE,
+                    format!("collect active operations: {e}"),
+                    RetrySpec::never(),
+                    EffectStatus::NotApplied,
+                )
+            })?
+    } else {
+        Vec::new()
+    };
+
+    let terminal_ids = if table_exists("terminals")? {
+        let mut stmt = conn
+            .prepare(
+                "SELECT terminal_id FROM terminals
+                 WHERE state NOT IN ('exited', 'failed', 'lost') AND server_epoch = ?1
+                 ORDER BY rowid ASC",
             )
-        })?;
-    Ok(ids)
+            .map_err(|e| {
+                ContractError::new(
+                    CODE_UNAVAILABLE,
+                    format!("query active terminals: {e}"),
+                    RetrySpec::never(),
+                    EffectStatus::NotApplied,
+                )
+            })?;
+        stmt.query_map(params![generation], |r| r.get(0))
+            .map_err(|e| {
+                ContractError::new(
+                    CODE_UNAVAILABLE,
+                    format!("query active terminals: {e}"),
+                    RetrySpec::never(),
+                    EffectStatus::NotApplied,
+                )
+            })?
+            .collect::<Result<Vec<String>, _>>()
+            .map_err(|e| {
+                ContractError::new(
+                    CODE_UNAVAILABLE,
+                    format!("collect active terminals: {e}"),
+                    RetrySpec::never(),
+                    EffectStatus::NotApplied,
+                )
+            })?
+    } else {
+        Vec::new()
+    };
+
+    Ok(ActiveResources {
+        run_ids,
+        operation_ids,
+        terminal_ids,
+    })
+}
+
+fn is_gateway_lock_held(data_root: &Path) -> bool {
+    let lock_path = gateway_instance_lock_path(data_root);
+    let Ok(file) = OpenOptions::new().read(true).write(true).open(&lock_path) else {
+        return false;
+    };
+    file.try_lock().is_err()
+}
+
+fn send_internal_stop_command(
+    ready: &ReadyFile,
+    token: &str,
+    mode: &str,
+    deadline: Instant,
+) -> Result<(), ContractError> {
+    let raw_url = ready.http_url.as_deref().unwrap_or(&ready.ws_url);
+    let stripped = raw_url
+        .strip_prefix("http://")
+        .or_else(|| raw_url.strip_prefix("https://"))
+        .or_else(|| raw_url.strip_prefix("ws://"))
+        .or_else(|| raw_url.strip_prefix("wss://"))
+        .unwrap_or(raw_url);
+    let authority = stripped.split(['/', '?']).next().unwrap_or("");
+    let normalized = if let Some(port) = authority.strip_prefix("0.0.0.0:") {
+        format!("127.0.0.1:{port}")
+    } else if let Some(port) = authority.strip_prefix("[::]:") {
+        format!("[::1]:{port}")
+    } else {
+        authority.to_owned()
+    };
+    let addr: SocketAddr = normalized.parse().map_err(|e| {
+        ContractError::new(
+            CODE_STOP_FAILED,
+            format!("invalid gateway endpoint `{authority}` in ready.json: {e}"),
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        )
+    })?;
+    let io_timeout = deadline
+        .saturating_duration_since(Instant::now())
+        .clamp(Duration::from_millis(200), Duration::from_secs(5));
+    let mut stream = std::net::TcpStream::connect_timeout(&addr, io_timeout).map_err(|e| {
+        ContractError::new(
+            CODE_STOP_FAILED,
+            format!("connect gateway control endpoint {addr}: {e}"),
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        )
+    })?;
+    let _ = stream.set_read_timeout(Some(io_timeout));
+    let _ = stream.set_write_timeout(Some(io_timeout));
+    let req = format!(
+        "POST /v1/internal/stop?mode={mode} HTTP/1.1\r\nHost: {normalized}\r\nAuthorization: Bearer {token}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+    );
+    stream.write_all(req.as_bytes()).map_err(|e| {
+        ContractError::new(
+            CODE_STOP_FAILED,
+            format!("send stop control request: {e}"),
+            RetrySpec::never(),
+            EffectStatus::Unknown,
+        )
+    })?;
+    let mut buf = [0u8; 2048];
+    let n = stream.read(&mut buf).map_err(|e| {
+        ContractError::new(
+            CODE_STOP_FAILED,
+            format!("read stop control response: {e}"),
+            RetrySpec::never(),
+            EffectStatus::Unknown,
+        )
+    })?;
+    let status_line = String::from_utf8_lossy(&buf[..n])
+        .lines()
+        .next()
+        .unwrap_or("")
+        .to_owned();
+    if !status_line.contains(" 200 ") {
+        return Err(ContractError::new(
+            CODE_STOP_FAILED,
+            format!("gateway control endpoint rejected {mode}: {status_line}"),
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        ));
+    }
+    Ok(())
 }
 
 /// The gateway's per-instance lock file: exactly one serving gateway per
@@ -726,6 +968,7 @@ pub async fn serve_v1_gateway(
 
     let (stop_tx, stop_rx) = watch::channel(false);
     tokio::pin!(stop);
+    let conn_limit = Arc::new(Semaphore::new(MAX_V1_CONNECTIONS));
     let mut conns = tokio::task::JoinSet::new();
 
     loop {
@@ -738,11 +981,19 @@ pub async fn serve_v1_gateway(
             _ = conns.join_next(), if !conns.is_empty() => {}
             accepted = listener.accept() => {
                 if let Ok((stream, _)) = accepted {
-                    let st = state.clone();
-                    let rx = stop_rx.clone();
-                    conns.spawn(async move {
-                        let _ = serve_v1_tcp_socket(stream, st, rx).await;
-                    });
+                    match conn_limit.clone().try_acquire_owned() {
+                        Ok(permit) => {
+                            let st = state.clone();
+                            let rx = stop_rx.clone();
+                            conns.spawn(async move {
+                                let _permit = permit;
+                                let _ = serve_v1_tcp_socket(stream, st, rx).await;
+                            });
+                        }
+                        Err(_) => {
+                            drop(stream);
+                        }
+                    }
                 } else {
                     // P2 (wp4 review): a persistent accept error (e.g. EMFILE)
                     // must not turn the accept loop into a 100% CPU spin.
@@ -793,6 +1044,9 @@ async fn serve_v1_tcp_socket(
         move |mut request, lease| {
             let st = state_http.clone();
             async move {
+                if crate::native_http::over_header_budget(&request) {
+                    return Ok(crate::native_http::request_header_fields_too_large());
+                }
                 if http_proxy::is_upgrade(&request) {
                     match (
                         request.uri().path(),
@@ -800,13 +1054,8 @@ async fn serve_v1_tcp_socket(
                         lease,
                     ) {
                         ("/v1/ws", Some(key), Some(lease)) => {
-                            // Capture the presented Bearer so the WS session
-                            // can re-verify it at every admission boundary
-                            // (access keys, Plan A). The authorize check below
-                            // still rejects the upgrade when it does not
-                            // verify.
                             let bearer = PublicV1State::extract_bearer(request.headers());
-                            if !st.authorize_headers(request.headers()) {
+                            if !st.authorize_headers_async(request.headers()).await {
                                 return Ok(PublicV1State::unauthorized_http_response());
                             }
                             if let Some(tx) = upgrade_sender.lock().expect("v1 upgrade").take() {
@@ -815,6 +1064,47 @@ async fn serve_v1_tcp_socket(
                             Ok(acceptor::websocket_response(Default::default(), &key))
                         }
                         _ => Err(std::io::Error::other("invalid /v1/ws upgrade")),
+                    }
+                } else if request.uri().path() == "/v1/internal/stop"
+                    && request.method() == hyper::Method::POST
+                {
+                    if !PublicV1State::extract_bearer(request.headers())
+                        .is_some_and(|tok| st.is_local_bearer_match(&tok))
+                    {
+                        return Ok(PublicV1State::unauthorized_http_response());
+                    }
+                    let mode = request
+                        .uri()
+                        .query()
+                        .and_then(|q| {
+                            q.split('&')
+                                .filter_map(|kv| kv.split_once('='))
+                                .find(|(k, _)| *k == "mode")
+                                .map(|(_, v)| v)
+                        })
+                        .unwrap_or("");
+                    match mode {
+                        "drain" => {
+                            st.runtime.enter_draining();
+                            Ok(PublicV1State::json_response(
+                                hyper::StatusCode::OK,
+                                &json!({"accepted": true, "mode": "drain"}),
+                            ))
+                        }
+                        "cancel" => {
+                            st.runtime.cancel_all_for_stop().await;
+                            crate::public_v1::domains::terminals_pty::close_all_live_terminals(
+                                false,
+                            );
+                            Ok(PublicV1State::json_response(
+                                hyper::StatusCode::OK,
+                                &json!({"accepted": true, "mode": "cancel"}),
+                            ))
+                        }
+                        _ => Ok(PublicV1State::json_response(
+                            hyper::StatusCode::BAD_REQUEST,
+                            &json!({"error": "invalid stop mode"}),
+                        )),
                     }
                 } else if request.uri().path() == "/health" {
                     let body = json!({
@@ -920,5 +1210,201 @@ fn signal_term(pid: u32) -> Result<(), ContractError> {
             RetrySpec::never(),
             EffectStatus::NotApplied,
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[test]
+    fn stop_local_service_validates_modes_and_overflow_without_panicking() {
+        let tmp = crate::public_v1::test_support::TempDir::new("stop-validate");
+        let root_dir = tmp.0.join("pd-home");
+        initialize_instance(&root_dir, None, Some("local"), Some(true)).unwrap();
+
+        let err = stop_local_service(&root_dir, None, "invalid-mode", 1000).unwrap_err();
+        assert_eq!(err.code, CODE_INVALID_ARGUMENT);
+
+        let err = stop_local_service(&root_dir, None, "idle", 0).unwrap_err();
+        assert_eq!(err.code, CODE_INVALID_ARGUMENT);
+
+        // `timeout_ms == u64::MAX` must not panic in `Instant::checked_add`.
+        let res = stop_local_service(&root_dir, None, "idle", u64::MAX).unwrap();
+        assert_eq!(res["stopped"], true);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn stop_local_service_checks_idle_active_resources_and_handles_drain_and_cancel() {
+        let tmp = crate::public_v1::test_support::TempDir::new("stop-modes");
+        let root_dir = tmp.0.join("pd-home");
+        initialize_instance(&root_dir, None, Some("local"), Some(true)).unwrap();
+        let (file, token) = load_local_instance_and_token(&root_dir, None).unwrap();
+        let meta = InstanceMeta {
+            instance_id: file.instance_id.clone(),
+            owner_id: file.owner_id.clone(),
+            product: file.product.clone(),
+            protocol_version: file.protocol_version.clone(),
+            node_id: file.node_id.clone(),
+            generation: "gen-stop-1".to_owned(),
+            server_revision: "srv-stop-1".to_owned(),
+            initialization_revision: file.initialization_revision.clone(),
+        };
+        let store = V1Store::open_and_recover(&root_dir, meta).unwrap();
+        let runtime = PublicV1Runtime::new(store);
+        let state = Arc::new(PublicV1State::new(runtime.clone(), token.clone()));
+
+        // Seed a project, session, and active queued run so `mode=idle` refuses stop.
+        let store = runtime.store();
+        store
+            .register_project(&json!({
+                "instanceId": file.instance_id,
+                "projectId": "proj-stop",
+                "name": "Stop",
+                "environmentId": "local",
+                "root": {"instanceId": file.instance_id, "rootId": "root-1", "relativePath": "ws"}
+            }))
+            .unwrap();
+        store
+            .create_session(&json!({
+                "instanceId": file.instance_id,
+                "sessionId": "sess-stop",
+                "projectId": "proj-stop",
+            }))
+            .unwrap();
+        let run_id = match store
+            .submit_run(
+                &json!({
+                    "instanceId": file.instance_id,
+                    "sessionId": "sess-stop",
+                    "input": [{"kind": "text", "text": "hold"}],
+                }),
+                Some("stop-key-1"),
+            )
+            .unwrap()
+        {
+            crate::public_v1::store::SubmitDisposition::NewRun { run_id, .. } => run_id,
+            other => panic!("unexpected disposition: {other:?}"),
+        };
+
+        // Hold `gateway.instance.lock` as a separate open file description.
+        let lock_path = gateway_instance_lock_path(&root_dir);
+        fs::create_dir_all(lock_path.parent().unwrap()).unwrap();
+        let lock_file = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(false)
+            .open(&lock_path)
+            .unwrap();
+        lock_file.try_lock().unwrap();
+
+        // Bind a real loopback HTTP control server on `serve_v1_tcp_socket`.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (stop_tx, stop_rx) = watch::channel(false);
+        let server_state = state.clone();
+        let server_task = tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    biased;
+                    accepted = listener.accept() => {
+                        if let Ok((sock, _)) = accepted {
+                            let st = server_state.clone();
+                            let rx = stop_rx.clone();
+                            tokio::spawn(async move {
+                                let _ = serve_v1_tcp_socket(sock, st, rx).await;
+                            });
+                        }
+                    }
+                }
+            }
+        });
+
+        // 1) Access key (non-local.token) must NOT authorize `/v1/internal/stop`.
+        let mut raw_stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let bad_req = format!(
+            "POST /v1/internal/stop?mode=drain HTTP/1.1\r\nHost: {addr}\r\nAuthorization: Bearer not-the-local-token\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        );
+        raw_stream.write_all(bad_req.as_bytes()).await.unwrap();
+        let mut resp_buf = [0u8; 512];
+        let n = tokio::time::timeout(Duration::from_secs(5), raw_stream.read(&mut resp_buf))
+            .await
+            .expect("HTTP 401 timeout")
+            .unwrap();
+        let resp_line = String::from_utf8_lossy(&resp_buf[..n]);
+        assert!(
+            resp_line.contains("401"),
+            "non-local bearer must receive 401 on /v1/internal/stop, got: {resp_line}"
+        );
+
+        // Spawn a harmless dummy child PID so `signal_term` never targets our test runner.
+        let mut child = std::process::Command::new("/bin/sleep")
+            .arg("30")
+            .spawn()
+            .expect("spawn sleep");
+        let child_pid = child.id();
+        let reaper = std::thread::spawn(move || {
+            let _ = child.wait();
+        });
+
+        let ready_path = root_dir.join("run").join("ready.json");
+        let ready = ReadyFile {
+            pid: child_pid,
+            instance_id: file.instance_id.clone(),
+            generation: "gen-stop-1".to_owned(),
+            protocol_version: file.protocol_version.clone(),
+            ws_url: format!("ws://{addr}/v1/ws"),
+            http_url: Some(format!("http://{addr}")),
+            started_at: Utc::now().to_rfc3339(),
+            server_revision: "srv-stop-1".to_owned(),
+        };
+        atomic_write_file(
+            &ready_path,
+            &serde_json::to_vec_pretty(&ready).unwrap(),
+            false,
+        )
+        .unwrap();
+
+        // 2) `idle` refuses while the active run exists with `ACTIVE_RESOURCES`.
+        let root_clone = root_dir.clone();
+        let idle_err = tokio::task::spawn_blocking(move || {
+            stop_local_service(&root_clone, None, "idle", 1000)
+        })
+        .await
+        .unwrap()
+        .unwrap_err();
+        assert_eq!(idle_err.code, CODE_ACTIVE_RESOURCES);
+
+        // 3) `drain` hits `/v1/internal/stop?mode=drain` (setting `runtime.is_draining()`),
+        //    then waits for active resources up to `timeoutMs` (reporting remainingRunIds on timeout).
+        let root_clone = root_dir.clone();
+        let drain_res = tokio::task::spawn_blocking(move || {
+            stop_local_service(&root_clone, None, "drain", 200)
+        })
+        .await
+        .unwrap()
+        .unwrap();
+        assert!(runtime.is_draining());
+        assert_eq!(drain_res["stopState"], "timeout");
+        assert_eq!(drain_res["remainingRunIds"], json!([run_id]));
+
+        // 4) `cancel` cancels active resources via `/v1/internal/stop?mode=cancel`,
+        //    signals the process, and reports `stopped: true`.
+        let root_clone = root_dir.clone();
+        let cancel_res = tokio::task::spawn_blocking(move || {
+            stop_local_service(&root_clone, None, "cancel", 5000)
+        })
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(cancel_res["stopped"], true);
+        assert_eq!(cancel_res["stopState"], "stopped");
+        assert!(!ready_path.exists());
+
+        let _ = stop_tx.send(true);
+        server_task.abort();
+        let _ = reaper.join();
     }
 }

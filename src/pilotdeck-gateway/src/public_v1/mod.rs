@@ -35,21 +35,54 @@ impl PublicV1State {
     ///
     /// Two credentials are accepted, in order:
     ///
-    /// 1. `local.token` — the original byte-level constant-time compare,
-    ///    unchanged and first (no database access on this path);
-    /// 2. product access keys — hashed and probed against this instance's
-    ///    `access_keys` table. Only a key that is enabled and not revoked
-    ///    authenticates; any storage failure fails closed. Hashing before
-    ///    the indexed lookup means no plaintext secret is ever compared or
-    ///    logged.
+    /// 1. `local.token` — byte-level constant-time compare (no database access);
+    /// 2. product access keys — hashed and checked through the epoch-bounded
+    ///    cache, falling back to `V1Store::conn` against `access_keys`.
     pub fn verify_token_str(&self, candidate: &str) -> bool {
         if constant_time_eq(candidate.as_bytes(), self.bearer_token.as_bytes()) {
             return true;
         }
-        crate::public_v1::domains::access_keys::authenticate_secret(
-            self.runtime.store().home(),
-            candidate,
-        )
+        let digest = crate::public_v1::domains::access_keys::secret_digest(candidate);
+        let (epoch, cached) = self.runtime.cached_auth_decision(&digest);
+        if let Some(valid) = cached {
+            return valid;
+        }
+        let valid = crate::public_v1::domains::access_keys::authenticate_secret_digest(
+            self.runtime.store(),
+            &digest,
+        );
+        self.runtime.record_auth_decision(epoch, digest, valid);
+        valid
+    }
+
+    /// Async counterpart of [`Self::verify_token_str`] that runs any SQLite
+    /// lookup on Tokio's blocking thread pool.
+    pub async fn verify_token_async(&self, candidate: &str) -> bool {
+        if constant_time_eq(candidate.as_bytes(), self.bearer_token.as_bytes()) {
+            return true;
+        }
+        let digest = crate::public_v1::domains::access_keys::secret_digest(candidate);
+        let (epoch, cached) = self.runtime.cached_auth_decision(&digest);
+        if let Some(valid) = cached {
+            return valid;
+        }
+        let store = self.runtime.store().clone();
+        let digest_c = digest.clone();
+        let valid = tokio::task::spawn_blocking(move || {
+            crate::public_v1::domains::access_keys::authenticate_secret_digest(&store, &digest_c)
+        })
+        .await
+        .unwrap_or(false);
+        self.runtime.record_auth_decision(epoch, digest, valid);
+        valid
+    }
+
+    pub(crate) fn subscribe_auth_revocation(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.runtime.subscribe_auth_revocation()
+    }
+
+    pub(crate) fn is_local_bearer_match(&self, candidate: &str) -> bool {
+        constant_time_eq(candidate.as_bytes(), self.bearer_token.as_bytes())
     }
 
     /// Extracts the `Authorization: Bearer` value (the presented credential)
@@ -69,6 +102,13 @@ impl PublicV1State {
 
     pub fn authorize_headers(&self, headers: &HeaderMap) -> bool {
         Self::extract_bearer(headers).is_some_and(|token| self.verify_token_str(&token))
+    }
+
+    pub async fn authorize_headers_async(&self, headers: &HeaderMap) -> bool {
+        match Self::extract_bearer(headers) {
+            Some(token) => self.verify_token_async(&token).await,
+            None => false,
+        }
     }
 
     pub fn unauthorized_http_response() -> Response<Body> {
@@ -94,7 +134,7 @@ impl PublicV1State {
     }
 }
 
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+pub(crate) fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;
     }

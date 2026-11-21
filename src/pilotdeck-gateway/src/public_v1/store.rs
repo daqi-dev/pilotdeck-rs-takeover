@@ -248,6 +248,43 @@ impl<'a> RunTransition<'a> {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct OwnedRunTransition {
+    pub new_state: RunState,
+    pub outcome_code: Option<String>,
+    pub effect_status: Option<String>,
+    pub result_artifact: Option<Value>,
+    pub event_type: String,
+    pub event_payload: Value,
+    pub pause_session_reason: Option<String>,
+}
+
+impl OwnedRunTransition {
+    pub fn from_borrowed(tr: &RunTransition<'_>) -> Self {
+        Self {
+            new_state: tr.new_state,
+            outcome_code: tr.outcome_code.map(ToOwned::to_owned),
+            effect_status: tr.effect_status.map(ToOwned::to_owned),
+            result_artifact: tr.result_artifact.cloned(),
+            event_type: tr.event_type.to_owned(),
+            event_payload: tr.event_payload.clone(),
+            pause_session_reason: tr.pause_session_reason.map(ToOwned::to_owned),
+        }
+    }
+
+    pub fn as_borrowed(&self) -> RunTransition<'_> {
+        RunTransition {
+            new_state: self.new_state,
+            outcome_code: self.outcome_code.as_deref(),
+            effect_status: self.effect_status.as_deref(),
+            result_artifact: self.result_artifact.as_ref(),
+            event_type: &self.event_type,
+            event_payload: &self.event_payload,
+            pause_session_reason: self.pause_session_reason.as_deref(),
+        }
+    }
+}
+
 impl V1Store {
     /// Opens `<home>/v1/state.sqlite` in WAL mode, runs schema migrations, applies crash
     /// recovery for interrupted active runs, and reconciles optional `runs/registry.json`.
@@ -257,10 +294,22 @@ impl V1Store {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let _ = fs::set_permissions(&v1_dir, fs::Permissions::from_mode(0o700));
+            fs::set_permissions(&v1_dir, fs::Permissions::from_mode(0o700))
+                .map_err(|e| storage_err(format!("chmod 0700 {}: {e}", v1_dir.display())))?;
         }
 
         let db_path = v1_dir.join("state.sqlite");
+        #[cfg(unix)]
+        if !db_path.exists() {
+            use std::os::unix::fs::OpenOptionsExt;
+            fs::OpenOptions::new()
+                .create(true)
+                .truncate(false)
+                .write(true)
+                .mode(0o600)
+                .open(&db_path)
+                .map_err(|e| storage_err(format!("create {}: {e}", db_path.display())))?;
+        }
         let conn = Connection::open(&db_path)
             .map_err(|e| storage_err(format!("open {}: {e}", db_path.display())))?;
         conn.execute_batch(
@@ -274,6 +323,7 @@ impl V1Store {
         .map_err(|e| storage_err(format!("sqlite pragma: {e}")))?;
 
         init_schema(&conn)?;
+        enforce_sqlite_file_permissions(&db_path)?;
 
         let node = NodeId::new(meta.node_id.clone()).unwrap_or_else(|_| NodeId::local());
         let store = Arc::new(Self {
@@ -317,7 +367,9 @@ impl V1Store {
 
     fn sync_meta_and_recover(&self) -> Result<(), ContractError> {
         let mut conn = self.conn.lock().expect("sqlite mutex");
-        let tx = conn.transaction().map_err(map_sql_err)?;
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(map_sql_tx_start_err)?;
 
         let existing_iid: Option<String> = tx
             .query_row(
@@ -649,7 +701,9 @@ impl V1Store {
         let expected_absent = input.get("expectedAbsent").and_then(Value::as_bool);
 
         let mut conn = self.conn.lock().expect("sqlite mutex");
-        let tx = conn.transaction().map_err(map_sql_err)?;
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(map_sql_tx_start_err)?;
         let exists: Option<String> = tx
             .query_row(
                 "SELECT project_id FROM projects WHERE project_id = ?1",
@@ -777,7 +831,9 @@ impl V1Store {
             .unwrap_or_default();
 
         let mut conn = self.conn.lock().expect("sqlite mutex");
-        let tx = conn.transaction().map_err(map_sql_err)?;
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(map_sql_tx_start_err)?;
         let proj_exists: Option<String> = tx
             .query_row(
                 "SELECT project_id FROM projects WHERE project_id = ?1",
@@ -912,7 +968,9 @@ impl V1Store {
         acknowledged_reason: &str,
     ) -> Result<(Value, Option<String>), ContractError> {
         let mut conn = self.conn.lock().expect("sqlite mutex");
-        let tx = conn.transaction().map_err(map_sql_err)?;
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(map_sql_tx_start_err)?;
         let row: Option<(bool, Option<String>, String, Option<String>)> = tx
             .query_row(
                 "SELECT queue_paused, pause_reason, queue_revision, active_run_id FROM sessions WHERE session_id = ?1",
@@ -1051,7 +1109,9 @@ impl V1Store {
         let retained_until = retention_expiry_rfc3339();
 
         let mut conn = self.conn.lock().expect("sqlite mutex");
-        let tx = conn.transaction().map_err(map_sql_err)?;
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(map_sql_tx_start_err)?;
 
         if let Some(key) = idempotency_key {
             let existing: Option<(String, String, Option<String>, Option<String>)> = tx
@@ -1093,15 +1153,37 @@ impl V1Store {
             }
         }
 
-        let sess_row: Option<(String, bool, Option<String>, Option<String>)> = tx
+        struct SessionAdmissionRow {
+            project_id: String,
+            session_state: String,
+            paused: bool,
+            pause_reason: Option<String>,
+            active_run_id: Option<String>,
+        }
+        let sess_row: Option<SessionAdmissionRow> = tx
             .query_row(
-                "SELECT project_id, queue_paused, pause_reason, active_run_id FROM sessions WHERE session_id = ?1",
+                "SELECT project_id, session_state, queue_paused, pause_reason, active_run_id FROM sessions WHERE session_id = ?1",
                 params![session_id],
-                |r| Ok((r.get(0)?, r.get::<_, i64>(1)? != 0, r.get(2)?, r.get(3)?)),
+                |r| {
+                    Ok(SessionAdmissionRow {
+                        project_id: r.get(0)?,
+                        session_state: r.get(1)?,
+                        paused: r.get::<_, i64>(2)? != 0,
+                        pause_reason: r.get(3)?,
+                        active_run_id: r.get(4)?,
+                    })
+                },
             )
             .optional()
             .map_err(map_sql_err)?;
-        let Some((project_id, paused, pause_reason, active_run_id)) = sess_row else {
+        let Some(SessionAdmissionRow {
+            project_id,
+            session_state,
+            paused,
+            pause_reason,
+            active_run_id,
+        }) = sess_row
+        else {
             if let Some(key) = idempotency_key {
                 record_rejection_in_tx(
                     &tx,
@@ -1116,6 +1198,42 @@ impl V1Store {
             }
             return Err(not_found("session", session_id));
         };
+        if session_state == "deleted" {
+            if let Some(key) = idempotency_key {
+                record_rejection_in_tx(
+                    &tx,
+                    key,
+                    "run.submit",
+                    &digest,
+                    CODE_NOT_FOUND,
+                    &now,
+                    &retained_until,
+                )?;
+                tx.commit().map_err(map_sql_err)?;
+            }
+            return Err(not_found("session", session_id));
+        }
+        if session_state == "closed" {
+            let code = crate::public_v1::domains::session_admin::CODE_SESSION_CLOSED;
+            if let Some(key) = idempotency_key {
+                record_rejection_in_tx(
+                    &tx,
+                    key,
+                    "run.submit",
+                    &digest,
+                    code,
+                    &now,
+                    &retained_until,
+                )?;
+                tx.commit().map_err(map_sql_err)?;
+            }
+            return Err(ContractError::new(
+                code,
+                format!("session `{session_id}` is closed; reopen it before submitting"),
+                RetrySpec::after_reconcile(),
+                EffectStatus::NotApplied,
+            ));
+        }
 
         if paused {
             if let Some(key) = idempotency_key {
@@ -1300,6 +1418,38 @@ impl V1Store {
         }
     }
 
+    /// Async variant of [`Self::transition_run_state`] that runs SQLite writes
+    /// on Tokio's blocking pool and backs off with `tokio::time::sleep` so
+    /// locked-database retries never stall async worker threads.
+    pub async fn transition_run_state_async(
+        self: &Arc<Self>,
+        run_id: String,
+        tr: OwnedRunTransition,
+    ) -> Result<(StoredRun, Option<String>), ContractError> {
+        let mut attempt = 0u32;
+        loop {
+            let store = self.clone();
+            let rid = run_id.clone();
+            let tr_c = tr.clone();
+            let res = tokio::task::spawn_blocking(move || {
+                store.transition_run_state_once(&rid, &tr_c.as_borrowed())
+            })
+            .await
+            .map_err(|e| storage_err(format!("blocking task failed: {e}")))?;
+            match res {
+                Ok(result) => return Ok(result),
+                Err(error) => {
+                    if attempt >= 6 || !is_locked_storage_error(&error) {
+                        return Err(error);
+                    }
+                    attempt += 1;
+                    tokio::time::sleep(std::time::Duration::from_millis(25u64 << attempt.min(5)))
+                        .await;
+                }
+            }
+        }
+    }
+
     fn transition_run_state_once(
         &self,
         run_id: &str,
@@ -1311,7 +1461,7 @@ impl V1Store {
         // busy_timeout=5000 兜底。
         let tx = conn
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
-            .map_err(map_sql_err)?;
+            .map_err(map_sql_tx_start_err)?;
         let existing = fetch_run_in_tx(&tx, run_id)?.ok_or_else(|| not_found("run", run_id))?;
 
         // P2 (wp4 review): terminal states are absorbing. Without this guard
@@ -1412,7 +1562,9 @@ impl V1Store {
         payload: &Value,
     ) -> Result<String, ContractError> {
         let mut conn = self.conn.lock().expect("sqlite mutex");
-        let tx = conn.transaction().map_err(map_sql_err)?;
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(map_sql_tx_start_err)?;
         let now = now_rfc3339();
         let cursor = append_event_in_tx(
             &tx,
@@ -1501,7 +1653,9 @@ impl V1Store {
         let retained_until = retention_expiry_rfc3339();
 
         let mut conn = self.conn.lock().expect("sqlite mutex");
-        let tx = conn.transaction().map_err(map_sql_err)?;
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(map_sql_tx_start_err)?;
 
         if let Some(key) = idempotency_key {
             let existing: Option<(String, String, Option<String>, Option<String>)> = tx
@@ -1740,7 +1894,9 @@ impl V1Store {
         response_schema: Value,
     ) -> Result<StoredInteraction, ContractError> {
         let mut conn = self.conn.lock().expect("sqlite mutex");
-        let tx = conn.transaction().map_err(map_sql_err)?;
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(map_sql_tx_start_err)?;
         let run = fetch_run_in_tx(&tx, run_id)?.ok_or_else(|| not_found("run", run_id))?;
 
         let interaction_id = self.id_gen.next_id();
@@ -1875,7 +2031,9 @@ impl V1Store {
         remember_scope: Option<&str>,
     ) -> Result<InteractionResolveOutcome, ContractError> {
         let mut conn = self.conn.lock().expect("sqlite mutex");
-        let tx = conn.transaction().map_err(map_sql_err)?;
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(map_sql_tx_start_err)?;
         let existing = fetch_interaction_in_tx(&tx, &self.meta.instance_id, interaction_id)?
             .ok_or_else(|| not_found("interaction", interaction_id))?;
 
@@ -2127,75 +2285,99 @@ impl V1Store {
 
     /// Builds inline `run.snapshot` (`state` + `history` + `interactions` sections <= 256 KiB each).
     pub fn build_run_snapshot(&self, run_id: &str) -> Result<Value, ContractError> {
-        let conn = self.conn.lock().expect("sqlite mutex");
-        let run = fetch_run_in_tx(&conn, run_id)?.ok_or_else(|| not_found("run", run_id))?;
+        let (run, high_cursor, mut events, mut interactions) = {
+            let conn = self.conn.lock().expect("sqlite mutex");
+            let run = fetch_run_in_tx(&conn, run_id)?.ok_or_else(|| not_found("run", run_id))?;
 
-        let high_cursor: Option<String> = conn
-            .query_row(
-                "SELECT cursor FROM events WHERE resource_id = ?1 ORDER BY seq DESC LIMIT 1",
-                params![run_id],
-                |r| r.get(0),
-            )
-            .optional()
-            .map_err(map_sql_err)?;
+            let high_cursor: Option<String> = conn
+                .query_row(
+                    "SELECT cursor FROM events WHERE resource_id = ?1 ORDER BY seq DESC LIMIT 1",
+                    params![run_id],
+                    |r| r.get(0),
+                )
+                .optional()
+                .map_err(map_sql_err)?;
+
+            // Fetch one extra event so `truncated` is exact at the 200-event boundary.
+            let events = fetch_run_events_after_conn(&conn, run_id, 0, 201)?;
+
+            let mut ia_stmt = conn
+                .prepare(
+                    "SELECT interaction_id FROM interactions WHERE run_id = ?1 ORDER BY created_at ASC",
+                )
+                .map_err(map_sql_err)?;
+            let ia_ids: Vec<String> = ia_stmt
+                .query_map(params![run_id], |r| r.get(0))
+                .map_err(map_sql_err)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(map_sql_err)?;
+            drop(ia_stmt);
+
+            let mut interactions = Vec::with_capacity(ia_ids.len());
+            for iid in ia_ids {
+                if let Some(ia) = fetch_interaction_in_tx(&conn, &self.meta.instance_id, &iid)? {
+                    interactions.push(ia.to_contract_json());
+                }
+            }
+            (run, high_cursor, events, interactions)
+        };
+        // Global SQLite mutex released above before JSON serialization & trimming.
+
         let checkpoint_cursor = high_cursor.clone().unwrap_or_else(|| format_cursor(0));
 
-        // P1 (wp4 review): each section's inline `data` must stay within the
-        // contract's 256 KiB budget (events can be arbitrarily large). Fetch
-        // one extra event so `truncated` is exact at the 200-event boundary,
-        // then trim by serialized bytes from the tail; `nextCursor` names the
-        // resume point for the remainder.
-        let mut events = fetch_run_events_after_conn(&conn, run_id, 0, 201)?;
         let count_truncated = events.len() > 200;
         events.truncate(200);
-        let mut next_cursor = events.last().map(|e| e.cursor.clone());
-        let mut history_byte_truncated = false;
-        let history_data = loop {
-            let event_items: Vec<Value> = events
-                .iter()
-                .map(|e| {
-                    json!({
-                        "seq": e.seq,
-                        "cursor": e.cursor,
-                        "type": e.event_type,
-                        "occurredAt": e.occurred_at,
-                        "payload": e.payload,
-                    })
+        let event_items: Vec<Value> = events
+            .iter()
+            .map(|e| {
+                json!({
+                    "seq": e.seq,
+                    "cursor": e.cursor,
+                    "type": e.event_type,
+                    "occurredAt": e.occurred_at,
+                    "payload": e.payload,
                 })
-                .collect();
+            })
+            .collect();
+        let (fitted_event_count, mut history_byte_truncated) = fit_items_prefix_to_budget(
+            &event_items,
+            json!({
+                "runId": run_id,
+                "events": [],
+                "truncated": true,
+                "nextCursor": Value::Null,
+            }),
+            80, // safe margin for `nextCursor` + `truncated` boolean
+        );
+        events.truncate(fitted_event_count);
+        let mut fitted_events = event_items;
+        fitted_events.truncate(fitted_event_count);
+        let history_data = loop {
+            let next_cursor = events.last().map(|e| e.cursor.clone());
             let data = json!({
                 "runId": run_id,
-                "events": event_items,
+                "events": fitted_events,
                 "truncated": count_truncated || history_byte_truncated,
                 "nextCursor": next_cursor,
             });
-            if section_fits_budget(&data) || events.is_empty() {
+            if section_fits_budget(&data) || fitted_events.is_empty() {
                 break data;
             }
+            fitted_events.pop();
             events.pop();
-            next_cursor = events.last().map(|e| e.cursor.clone());
             history_byte_truncated = true;
         };
 
-        let mut ia_stmt = conn
-            .prepare(
-                "SELECT interaction_id FROM interactions WHERE run_id = ?1 ORDER BY created_at ASC",
-            )
-            .map_err(map_sql_err)?;
-        let ia_ids: Vec<String> = ia_stmt
-            .query_map(params![run_id], |r| r.get(0))
-            .map_err(map_sql_err)?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(map_sql_err)?;
-        drop(ia_stmt);
-
-        let mut interactions = Vec::new();
-        for iid in ia_ids {
-            if let Some(ia) = fetch_interaction_in_tx(&conn, &self.meta.instance_id, &iid)? {
-                interactions.push(ia.to_contract_json());
-            }
-        }
-        let mut interactions_byte_truncated = false;
+        let (fitted_ia_count, mut interactions_byte_truncated) = fit_items_prefix_to_budget(
+            &interactions,
+            json!({
+                "runId": run_id,
+                "interactions": [],
+                "truncated": true,
+            }),
+            16,
+        );
+        interactions.truncate(fitted_ia_count);
         let interactions_data = loop {
             let data = json!({
                 "runId": run_id,
@@ -2299,21 +2481,107 @@ impl V1Store {
     }
 
     /// P1 (wp4 review): a worker must win exactly one atomic claim before it
-    /// drives a run. Only a still-`queued` run can be claimed; the claim
-    /// flips it to `running` so any competing worker (double spawn, queue
-    /// pickup racing a submit, or a cancel that terminalized the run between
-    /// the worker's read and its registration) observes zero updated rows and
-    /// skips the run. The driver/owned paths re-transition `Running` right
-    /// after, journaling the `run.started` event.
+    /// drives a run. Only a still-`queued` run belonging to an unpaused session
+    /// can be claimed; the claim flips it to `running` and pins
+    /// `sessions.active_run_id` inside one IMMEDIATE transaction so paused
+    /// sessions cannot leak execution and `activeRunId` stays synchronized.
     pub fn claim_run_execution(&self, run_id: &str) -> Result<bool, ContractError> {
-        let conn = self.conn.lock().expect("sqlite mutex");
-        let updated = conn
+        let mut conn = self.conn.lock().expect("sqlite mutex");
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(map_sql_tx_start_err)?;
+        let row: Option<(String, String, i64)> = tx
+            .query_row(
+                "SELECT r.session_id, r.state, s.queue_paused
+                 FROM runs r
+                 JOIN sessions s ON s.session_id = r.session_id
+                 WHERE r.run_id = ?1",
+                params![run_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .optional()
+            .map_err(map_sql_err)?;
+        let Some((session_id, state, queue_paused)) = row else {
+            return Ok(false);
+        };
+        if state != "queued" || queue_paused != 0 {
+            return Ok(false);
+        }
+        let updated = tx
             .execute(
                 "UPDATE runs SET state = 'running', updated_at = ?2 WHERE run_id = ?1 AND state = 'queued'",
                 params![run_id, now_rfc3339()],
             )
             .map_err(map_sql_err)?;
-        Ok(updated == 1)
+        if updated != 1 {
+            return Ok(false);
+        }
+        tx.execute(
+            "UPDATE sessions SET active_run_id = ?1 WHERE session_id = ?2",
+            params![run_id, session_id],
+        )
+        .map_err(map_sql_err)?;
+        tx.commit().map_err(map_sql_err)?;
+        Ok(true)
+    }
+
+    pub(crate) fn clear_active_run_if_matching(
+        &self,
+        session_id: &str,
+        run_id: &str,
+    ) -> Result<(), ContractError> {
+        let conn = self.conn.lock().expect("sqlite mutex");
+        conn.execute(
+            "UPDATE sessions SET active_run_id = NULL WHERE session_id = ?1 AND active_run_id = ?2",
+            params![session_id, run_id],
+        )
+        .map_err(map_sql_err)?;
+        Ok(())
+    }
+
+    pub(crate) fn list_non_terminal_run_ids(&self) -> Result<Vec<String>, ContractError> {
+        let conn = self.conn.lock().expect("sqlite mutex");
+        let mut stmt = conn
+            .prepare("SELECT run_id FROM runs WHERE terminal = 0 ORDER BY rowid ASC")
+            .map_err(map_sql_err)?;
+        let ids = stmt
+            .query_map([], |r| r.get(0))
+            .map_err(map_sql_err)?
+            .collect::<Result<Vec<String>, _>>()
+            .map_err(map_sql_err)?;
+        Ok(ids)
+    }
+
+    pub(crate) fn cancel_non_terminal_operations_for_stop(&self) -> Result<usize, ContractError> {
+        let mut conn = self.conn.lock().expect("sqlite mutex");
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(map_sql_tx_start_err)?;
+        let has_ops: bool = tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'operations')",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .map_err(map_sql_err)?
+            != 0;
+        let updated = if has_ops {
+            tx.execute(
+                "UPDATE operations
+                 SET cancel_requested = 1, state = 'cancelling', updated_at = ?1
+                 WHERE terminal = 0 AND cancellable = 1 AND cancel_requested = 0",
+                params![now_rfc3339()],
+            )
+            .map_err(map_sql_err)?
+        } else {
+            0
+        };
+        tx.commit().map_err(map_sql_err)?;
+        if updated > 0 {
+            self.state_notify.notify_waiters();
+            self.event_notify.notify_waiters();
+        }
+        Ok(updated)
     }
 
     /// Helpers strictly for testing `ResponseOutcome` / unused-import-free verification.
@@ -2878,6 +3146,54 @@ fn section_fits_budget(data: &Value) -> bool {
         .unwrap_or(false)
 }
 
+fn fit_items_prefix_to_budget(
+    items: &[Value],
+    empty_template: Value,
+    extra_margin: usize,
+) -> (usize, bool) {
+    let base_len = serde_json::to_vec(&empty_template)
+        .map(|v| v.len())
+        .unwrap_or(128)
+        .saturating_add(extra_margin);
+    let mut used = base_len;
+    for (idx, item) in items.iter().enumerate() {
+        let item_len = serde_json::to_vec(item)
+            .map(|v| v.len())
+            .unwrap_or(SNAPSHOT_SECTION_MAX_BYTES)
+            .saturating_add(usize::from(idx > 0)); // comma
+        if used.saturating_add(item_len) > SNAPSHOT_SECTION_MAX_BYTES {
+            return (idx, true);
+        }
+        used = used.saturating_add(item_len);
+    }
+    (items.len(), false)
+}
+
+fn enforce_sqlite_file_permissions(db_path: &Path) -> Result<(), ContractError> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let suffixes = ["", "-wal", "-shm"];
+        for suffix in suffixes {
+            let mut os = db_path.as_os_str().to_os_string();
+            os.push(suffix);
+            let p = PathBuf::from(os);
+            match fs::set_permissions(&p, fs::Permissions::from_mode(0o600)) {
+                Ok(()) => {}
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound && !suffix.is_empty() => {}
+                Err(err) => {
+                    return Err(storage_err(format!("chmod 0600 {}: {err}", p.display())));
+                }
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = db_path;
+    }
+    Ok(())
+}
+
 fn build_snapshot_section(name: &str, schema_id: &str, data: Value) -> Value {
     let serialized = serde_json::to_vec(&data).unwrap_or_default();
     let mut hasher = Sha256::new();
@@ -3003,6 +3319,15 @@ fn not_found(kind: &str, id: &str) -> ContractError {
 
 fn map_sql_err(err: rusqlite::Error) -> ContractError {
     storage_err(err.to_string())
+}
+
+fn map_sql_tx_start_err(err: rusqlite::Error) -> ContractError {
+    ContractError::new(
+        agentcpm_pd_protocol::errors::CODE_UNAVAILABLE,
+        format!("sqlite storage error: {err}"),
+        RetrySpec::backoff_read(Some(250)),
+        EffectStatus::NotApplied,
+    )
 }
 
 fn storage_err(msg: String) -> ContractError {

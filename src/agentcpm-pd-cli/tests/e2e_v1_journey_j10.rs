@@ -828,6 +828,7 @@ impl Drop for Env {
 fn cli(home: &Path, install_root: &Path, args: &[&str]) -> CliOutcome {
     let mut cmd = StdCommand::new(BIN);
     cmd.env("AGENTCPM_PD_HOME", home)
+        .env("AGENTCPM_PD_ENABLE_OFFLINE_DIRECTIVES", "1")
         .env("AGENTCPM_PD_INSTALL_ROOT", install_root)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())

@@ -32,10 +32,8 @@
 //! instead of a database rowid, and a hash-derived fingerprint instead of a
 //! 10-char plaintext prefix in listings.
 
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
 
 use agentcpm_pd_protocol::contract::ResponseOutcome;
 use agentcpm_pd_protocol::errors::{
@@ -49,7 +47,7 @@ use uuid::Uuid;
 
 use crate::public_v1::domains::DomainRegistry;
 use crate::public_v1::runtime::{DispatchError, PublicV1Runtime};
-use crate::public_v1::store::now_rfc3339;
+use crate::public_v1::store::{V1Store, now_rfc3339};
 
 /// Contract error code for `access_key.set_enabled` on a revoked key
 /// (declared in the operation's `errors` list; the protocol crate has no
@@ -119,44 +117,9 @@ fn fingerprint_of(secret_hash: &str) -> String {
     format!("sha256:{}", &secret_hash[..secret_hash.len().min(16)])
 }
 
-// ---------------------------------------------------------------------------
-// Domain SQLite access (second connection; see module docs)
-// ---------------------------------------------------------------------------
-
-/// Process-wide cache of per-data-root connections, so repeated operations
-/// reuse one handle instead of reopening the database per request.
-static DOMAIN_CONNECTIONS: OnceLock<Mutex<HashMap<PathBuf, Arc<Mutex<Connection>>>>> =
-    OnceLock::new();
-
-fn domain_connection(home: &Path) -> Result<Arc<Mutex<Connection>>, ContractError> {
-    let registry = DOMAIN_CONNECTIONS.get_or_init(|| Mutex::new(HashMap::new()));
-    let mut cache = registry.lock().expect("access_keys connection cache");
-    if let Some(conn) = cache.get(home) {
-        return Ok(conn.clone());
-    }
-    let db_path = home.join("v1").join("state.sqlite");
-    if !db_path.exists() {
-        // The serving gateway always opens the store (which creates the
-        // database and runs the domain DDL) before dispatching, so a missing
-        // file means this home was never initialized.
-        return Err(storage_err(format!(
-            "state database {} does not exist",
-            db_path.display()
-        )));
-    }
-    let conn = Connection::open(&db_path)
-        .map_err(|e| storage_err(format!("open {}: {e}", db_path.display())))?;
-    // Match the main store connection's pragmas: WAL is persistent in the
-    // database file, while busy_timeout / foreign_keys / synchronous are
-    // per-connection.
-    conn.execute_batch(
-        "PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON; PRAGMA synchronous = FULL;",
-    )
-    .map_err(|e| storage_err(format!("pragma {}: {e}", db_path.display())))?;
-    let conn = Arc::new(Mutex::new(conn));
-    cache.insert(home.to_path_buf(), conn.clone());
-    Ok(conn)
-}
+// Domain SQLite access reuses `V1Store::conn` through `tokio::task::spawn_blocking`.
+// (Global per-home connection cache removed to avoid WAL BUSY_SNAPSHOT, FD leaks,
+// and worker-thread blocking.)
 
 // ---------------------------------------------------------------------------
 // Row model and helpers
@@ -365,10 +328,18 @@ async fn access_key_list(
     input: Value,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
     let (offset, limit) = parse_page(input.get("page"))?;
-    let conn = domain_connection(rt.store().home())?;
-    let conn = conn.lock().expect("access_keys sqlite mutex");
-    let snapshot_revision = read_current_rev(&conn)?;
-    let keys = load_all_keys(&conn)?;
+    let store = rt.store().clone();
+    let (snapshot_revision, keys) = tokio::task::spawn_blocking(move || {
+        let conn = store
+            .conn
+            .lock()
+            .map_err(|_| storage_err("sqlite mutex poisoned".into()))?;
+        let snapshot_revision = read_current_rev(&conn)?;
+        let keys = load_all_keys(&conn)?;
+        Ok::<_, ContractError>((snapshot_revision, keys))
+    })
+    .await
+    .map_err(|e| DispatchError::Application(storage_err(format!("blocking task failed: {e}"))))??;
     let (items, page_info) = paginate_keys(keys, offset, limit, &snapshot_revision)?;
     Ok((
         ResponseOutcome::Succeeded,
@@ -380,70 +351,77 @@ async fn access_key_create(
     rt: Arc<PublicV1Runtime>,
     input: Value,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
-    let Some(key_id) = input["keyId"].as_str() else {
+    let Some(key_id) = input["keyId"].as_str().map(ToOwned::to_owned) else {
         return Err(invalid_argument("`keyId` must be a string").into());
     };
-    let Some(name) = input["name"].as_str() else {
+    let Some(name_raw) = input["name"].as_str() else {
         return Err(invalid_argument("`name` must be a string").into());
     };
     // The contract schema does not constrain the name's content; the TS
     // baseline rejects empty/whitespace-only names on create, so that
     // behavior is mirrored here.
-    let name = name.trim();
+    let name = name_raw.trim().to_owned();
     if name.is_empty() {
         return Err(invalid_argument("key name is required and must not be blank").into());
     }
 
-    let conn = domain_connection(rt.store().home())?;
-    let mut conn = conn.lock().expect("access_keys sqlite mutex");
-    let tx = conn
-        .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(map_sql_err)?;
+    let store = rt.store().clone();
+    let (key, secret) = tokio::task::spawn_blocking(move || {
+        let mut conn = store
+            .conn
+            .lock()
+            .map_err(|_| storage_err("sqlite mutex poisoned".into()))?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(map_sql_err)?;
 
-    // nonReplayable create: a retry that lost the first response hits the
-    // duplicate-id guard — no second key is generated and the secret is
-    // never re-exposed.
-    let exists: Option<String> = tx
-        .query_row(
-            "SELECT key_id FROM access_keys WHERE key_id = ?1",
-            params![key_id],
-            |r| r.get(0),
+        let exists: Option<String> = tx
+            .query_row(
+                "SELECT key_id FROM access_keys WHERE key_id = ?1",
+                params![key_id],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(map_sql_err)?;
+        if exists.is_some() {
+            return Err(ContractError::new(
+                CODE_ALREADY_EXISTS,
+                format!("access key `{key_id}` already exists"),
+                RetrySpec::never(),
+                EffectStatus::NotApplied,
+            ));
+        }
+
+        let secret = generate_secret();
+        let secret_hash = sha256_hex(secret.as_bytes());
+        let fingerprint = fingerprint_of(&secret_hash);
+        let revision = next_rev_in_tx(&tx)?;
+        let now = now_rfc3339();
+        tx.execute(
+            "INSERT INTO access_keys
+                 (key_id, name, secret_hash, fingerprint, enabled, revoked, revision, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, 1, 0, ?5, ?6, ?6)",
+            params![key_id, name, secret_hash, fingerprint, revision, now],
         )
-        .optional()
         .map_err(map_sql_err)?;
-    if exists.is_some() {
-        return Err(ContractError::new(
-            CODE_ALREADY_EXISTS,
-            format!("access key `{key_id}` already exists"),
-            RetrySpec::never(),
-            EffectStatus::NotApplied,
-        )
-        .into());
-    }
+        tx.commit().map_err(map_sql_err)?;
 
-    let secret = generate_secret();
-    let secret_hash = sha256_hex(secret.as_bytes());
-    let fingerprint = fingerprint_of(&secret_hash);
-    let revision = next_rev_in_tx(&tx)?;
-    let now = now_rfc3339();
-    tx.execute(
-        "INSERT INTO access_keys
-             (key_id, name, secret_hash, fingerprint, enabled, revoked, revision, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, 1, 0, ?5, ?6, ?6)",
-        params![key_id, name, secret_hash, fingerprint, revision, now],
-    )
-    .map_err(map_sql_err)?;
-    tx.commit().map_err(map_sql_err)?;
-
-    let key = StoredAccessKey {
-        key_id: key_id.to_owned(),
-        name: name.to_owned(),
-        enabled: true,
-        revoked: false,
-        revision,
-        fingerprint,
-        created_at: now,
-    };
+        Ok::<_, ContractError>((
+            StoredAccessKey {
+                key_id,
+                name,
+                enabled: true,
+                revoked: false,
+                revision,
+                fingerprint,
+                created_at: now,
+            },
+            secret,
+        ))
+    })
+    .await
+    .map_err(|e| DispatchError::Application(storage_err(format!("blocking task failed: {e}"))))??;
+    rt.bump_auth_epoch();
     Ok((
         ResponseOutcome::Succeeded,
         json!({"key": key.to_contract_json(), "secret": secret}),
@@ -455,7 +433,7 @@ async fn access_key_set_enabled(
     input: Value,
     expected_revision: Option<String>,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
-    let Some(key_id) = input["keyId"].as_str() else {
+    let Some(key_id) = input["keyId"].as_str().map(ToOwned::to_owned) else {
         return Err(invalid_argument("`keyId` must be a string").into());
     };
     let Some(enabled) = input["enabled"].as_bool() else {
@@ -463,51 +441,59 @@ async fn access_key_set_enabled(
     };
     let expected = expected_revision_of(&input, expected_revision.as_deref());
 
-    let conn = domain_connection(rt.store().home())?;
-    let mut conn = conn.lock().expect("access_keys sqlite mutex");
-    let tx = conn
-        .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(map_sql_err)?;
+    let store = rt.store().clone();
+    let (updated, changed) = tokio::task::spawn_blocking(move || {
+        let mut conn = store
+            .conn
+            .lock()
+            .map_err(|_| storage_err("sqlite mutex poisoned".into()))?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(map_sql_err)?;
 
-    let Some(key) = load_key(&tx, key_id)? else {
-        return Err(key_not_found(key_id).into());
-    };
-    // A revoked key is terminal: it can never be (re-)enabled, regardless
-    // of the requested value or the revision presented.
-    if key.revoked {
-        return Err(ContractError::new(
-            CODE_KEY_REVOKED,
-            format!("access key `{key_id}` is revoked and cannot be enabled or disabled"),
-            RetrySpec::never(),
-            EffectStatus::NotApplied,
+        let Some(key) = load_key(&tx, &key_id)? else {
+            return Err(key_not_found(&key_id));
+        };
+        if key.revoked {
+            return Err(ContractError::new(
+                CODE_KEY_REVOKED,
+                format!("access key `{key_id}` is revoked and cannot be enabled or disabled"),
+                RetrySpec::never(),
+                EffectStatus::NotApplied,
+            ));
+        }
+        if key.revision != expected {
+            return Err(revision_conflict(&expected, &key.revision));
+        }
+        if key.enabled == enabled {
+            tx.commit().map_err(map_sql_err)?;
+            return Ok::<_, ContractError>((key, false));
+        }
+
+        let revision = next_rev_in_tx(&tx)?;
+        let now = now_rfc3339();
+        tx.execute(
+            "UPDATE access_keys SET enabled = ?1, revision = ?2, updated_at = ?3 WHERE key_id = ?4",
+            params![i64::from(enabled), revision, now, key_id],
         )
-        .into());
-    }
-    if key.revision != expected {
-        return Err(revision_conflict(&expected, &key.revision).into());
-    }
-    if key.enabled == enabled {
-        // No state change requested; the confirmed current state is
-        // returned without allocating a new revision.
+        .map_err(map_sql_err)?;
         tx.commit().map_err(map_sql_err)?;
-        return Ok((
-            ResponseOutcome::Succeeded,
-            json!({"key": key.to_contract_json()}),
-        ));
+
+        let mut updated = key;
+        updated.enabled = enabled;
+        updated.revision = revision;
+        Ok((updated, true))
+    })
+    .await
+    .map_err(|e| DispatchError::Application(storage_err(format!("blocking task failed: {e}"))))??;
+
+    if changed {
+        if enabled {
+            rt.bump_auth_epoch();
+        } else {
+            rt.notify_auth_revocation();
+        }
     }
-
-    let revision = next_rev_in_tx(&tx)?;
-    let now = now_rfc3339();
-    tx.execute(
-        "UPDATE access_keys SET enabled = ?1, revision = ?2, updated_at = ?3 WHERE key_id = ?4",
-        params![i64::from(enabled), revision, now, key_id],
-    )
-    .map_err(map_sql_err)?;
-    tx.commit().map_err(map_sql_err)?;
-
-    let mut updated = key;
-    updated.enabled = enabled;
-    updated.revision = revision;
     Ok((
         ResponseOutcome::Succeeded,
         json!({"key": updated.to_contract_json()}),
@@ -519,46 +505,52 @@ async fn access_key_revoke(
     input: Value,
     expected_revision: Option<String>,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
-    let Some(key_id) = input["keyId"].as_str() else {
+    let Some(key_id) = input["keyId"].as_str().map(ToOwned::to_owned) else {
         return Err(invalid_argument("`keyId` must be a string").into());
     };
     let expected = expected_revision_of(&input, expected_revision.as_deref());
 
-    let conn = domain_connection(rt.store().home())?;
-    let mut conn = conn.lock().expect("access_keys sqlite mutex");
-    let tx = conn
-        .transaction_with_behavior(TransactionBehavior::Immediate)
+    let store = rt.store().clone();
+    let (updated, changed) = tokio::task::spawn_blocking(move || {
+        let mut conn = store
+            .conn
+            .lock()
+            .map_err(|_| storage_err("sqlite mutex poisoned".into()))?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(map_sql_err)?;
+
+        let Some(key) = load_key(&tx, &key_id)? else {
+            return Err(key_not_found(&key_id));
+        };
+        if key.revision != expected {
+            return Err(revision_conflict(&expected, &key.revision));
+        }
+        if key.revoked {
+            tx.commit().map_err(map_sql_err)?;
+            return Ok::<_, ContractError>((key, false));
+        }
+
+        let revision = next_rev_in_tx(&tx)?;
+        let now = now_rfc3339();
+        tx.execute(
+            "UPDATE access_keys SET revoked = 1, revision = ?1, updated_at = ?2 WHERE key_id = ?3",
+            params![revision, now, key_id],
+        )
         .map_err(map_sql_err)?;
-
-    let Some(key) = load_key(&tx, key_id)? else {
-        return Err(key_not_found(key_id).into());
-    };
-    if key.revision != expected {
-        return Err(revision_conflict(&expected, &key.revision).into());
-    }
-    if key.revoked {
-        // Revocation is permanent but re-revoking a key whose current state
-        // the caller has already observed is a clear success ("重复撤销结果
-        // 明确"): the confirmed current state is returned unchanged.
         tx.commit().map_err(map_sql_err)?;
-        return Ok((
-            ResponseOutcome::Succeeded,
-            json!({"key": key.to_contract_json()}),
-        ));
+
+        let mut updated = key;
+        updated.revoked = true;
+        updated.revision = revision;
+        Ok((updated, true))
+    })
+    .await
+    .map_err(|e| DispatchError::Application(storage_err(format!("blocking task failed: {e}"))))??;
+
+    if changed {
+        rt.notify_auth_revocation();
     }
-
-    let revision = next_rev_in_tx(&tx)?;
-    let now = now_rfc3339();
-    tx.execute(
-        "UPDATE access_keys SET revoked = 1, revision = ?1, updated_at = ?2 WHERE key_id = ?3",
-        params![revision, now, key_id],
-    )
-    .map_err(map_sql_err)?;
-    tx.commit().map_err(map_sql_err)?;
-
-    let mut updated = key;
-    updated.revoked = true;
-    updated.revision = revision;
     Ok((
         ResponseOutcome::Succeeded,
         json!({"key": updated.to_contract_json()}),
@@ -587,14 +579,14 @@ fn revision_conflict(expected: &str, current: &str) -> ContractError {
 /// Only a key that is enabled and not revoked authenticates; any storage
 /// failure fails closed. The candidate is hashed before the indexed
 /// lookup, so no plaintext secret comparison or logging occurs.
-pub(crate) fn authenticate_secret(home: &Path, candidate: &str) -> bool {
-    let Ok(conn) = domain_connection(home) else {
+pub(crate) fn secret_digest(candidate: &str) -> String {
+    sha256_hex(candidate.as_bytes())
+}
+
+pub(crate) fn authenticate_secret_digest(store: &V1Store, candidate_hash: &str) -> bool {
+    let Ok(conn) = store.conn.lock() else {
         return false;
     };
-    let Ok(conn) = conn.lock() else {
-        return false;
-    };
-    let candidate_hash = sha256_hex(candidate.as_bytes());
     let active: Option<i64> = conn
         .query_row(
             "SELECT 1 FROM access_keys WHERE secret_hash = ?1 AND enabled = 1 AND revoked = 0",
@@ -607,12 +599,19 @@ pub(crate) fn authenticate_secret(home: &Path, candidate: &str) -> bool {
     active.is_some()
 }
 
+#[cfg(test)]
+fn authenticate_secret(store: &V1Store, candidate: &str) -> bool {
+    authenticate_secret_digest(store, &secret_digest(candidate))
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use agentcpm_pd_protocol::registry::OperationRegistry;
     use serde_json::json;
 
@@ -699,9 +698,8 @@ mod tests {
         result
     }
 
-    fn row_count(home: &Path) -> i64 {
-        let conn = domain_connection(home).unwrap();
-        let conn = conn.lock().expect("access_keys sqlite mutex");
+    fn row_count(store: &V1Store) -> i64 {
+        let conn = store.conn.lock().expect("access_keys sqlite mutex");
         conn.query_row("SELECT COUNT(*) FROM access_keys", [], |r| r.get(0))
             .unwrap()
     }
@@ -746,10 +744,9 @@ mod tests {
         );
 
         // The stored row must not contain the plaintext secret, only its
-        // hash form (checked through the domain connection).
+        // hash form (checked through V1Store::conn).
         {
-            let conn = domain_connection(rt.store().home()).unwrap();
-            let conn = conn.lock().expect("access_keys sqlite mutex");
+            let conn = rt.store().conn.lock().expect("access_keys sqlite mutex");
             let hash: String = conn
                 .query_row(
                     "SELECT secret_hash FROM access_keys WHERE key_id = 'k-primary'",
@@ -804,7 +801,7 @@ mod tests {
         );
 
         // "丢响应同ID不生成第二key": still exactly one row.
-        assert_eq!(row_count(rt.store().home()), 1);
+        assert_eq!(row_count(rt.store()), 1);
         let listed = list_keys(&rt, &iid).await;
         assert_eq!(listed["items"].as_array().map(Vec::len), Some(1));
     }
@@ -825,7 +822,7 @@ mod tests {
             );
             assert_eq!(err.code, "INVALID_ARGUMENT", "name {name:?}");
         }
-        assert_eq!(row_count(rt.store().home()), 0);
+        assert_eq!(row_count(rt.store()), 0);
     }
 
     #[tokio::test]
@@ -1120,7 +1117,7 @@ mod tests {
         assert_eq!(err.effect, EffectStatus::NotApplied);
 
         // Zero side effects on this end: nothing was written.
-        assert_eq!(row_count(rt.store().home()), 0);
+        assert_eq!(row_count(rt.store()), 0);
         let listed = list_keys(&rt, &iid).await;
         assert_eq!(listed["items"].as_array().map(Vec::len), Some(0));
         assert_eq!(listed["pageInfo"]["complete"], true);
@@ -1171,8 +1168,8 @@ mod tests {
         }
 
         // The stored secret authenticates only against its own instance.
-        assert!(authenticate_secret(rt_a.store().home(), &secret_a));
-        assert!(!authenticate_secret(rt_b.store().home(), &secret_a));
+        assert!(authenticate_secret(rt_a.store(), &secret_a));
+        assert!(!authenticate_secret(rt_b.store(), &secret_a));
     }
 
     #[tokio::test]
@@ -1180,11 +1177,11 @@ mod tests {
         let (_tmp, rt, iid) = fresh_home("ak-auth");
 
         // No keys yet: nothing authenticates.
-        assert!(!authenticate_secret(rt.store().home(), "ck_whatever"));
+        assert!(!authenticate_secret(rt.store(), "ck_whatever"));
 
         let (_, secret) = create_key(&rt, &iid, "k-auth", "auth probe").await;
-        assert!(authenticate_secret(rt.store().home(), &secret));
-        assert!(!authenticate_secret(rt.store().home(), "ck_not_the_secret"));
+        assert!(authenticate_secret(rt.store(), &secret));
+        assert!(!authenticate_secret(rt.store(), "ck_not_the_secret"));
 
         let listed = list_keys(&rt, &iid).await;
         let rev = listed["items"][0]["revision"].as_str().unwrap().to_owned();
@@ -1198,7 +1195,7 @@ mod tests {
         )
         .await
         .unwrap();
-        assert!(!authenticate_secret(rt.store().home(), &secret));
+        assert!(!authenticate_secret(rt.store(), &secret));
 
         // Re-enabled again.
         let listed = list_keys(&rt, &iid).await;
@@ -1211,7 +1208,7 @@ mod tests {
         )
         .await
         .unwrap();
-        assert!(authenticate_secret(rt.store().home(), &secret));
+        assert!(authenticate_secret(rt.store(), &secret));
 
         // Revocation is permanent.
         let listed = list_keys(&rt, &iid).await;
@@ -1225,13 +1222,9 @@ mod tests {
         .await
         .unwrap();
         assert!(
-            !authenticate_secret(rt.store().home(), &secret),
+            !authenticate_secret(rt.store(), &secret),
             "a revoked key must stop authenticating immediately"
         );
-
-        // A secret for an uninitialized home fails closed without panicking.
-        let foreign = TempDir::new("ak-auth-foreign");
-        assert!(!authenticate_secret(&foreign.0, &secret));
     }
 
     #[tokio::test]
@@ -1415,13 +1408,30 @@ mod tests {
     }
 
     #[test]
-    fn domain_connection_caches_per_home_and_fails_closed_on_missing_db() {
-        let foreign = TempDir::new("ak-conn-foreign");
-        let err = domain_connection(&foreign.0).expect_err("uninitialized home must fail");
-        assert_eq!(err.code, "UNAVAILABLE");
-
-        // Fail-closed probe for the Phase B seam on the same missing home.
-        assert!(!authenticate_secret(&foreign.0, "ck_anything"));
+    fn authenticate_secret_fails_closed_when_table_missing_or_unregistered() {
+        let tmp = TempDir::new("ak-conn-missing");
+        let root_dir = tmp.0.join("pd-home");
+        initialize_instance(&root_dir, None, Some("local"), Some(true)).unwrap();
+        let (file, _) = load_local_instance_and_token(&root_dir, None).unwrap();
+        let meta = InstanceMeta {
+            instance_id: file.instance_id,
+            owner_id: file.owner_id,
+            product: file.product,
+            protocol_version: file.protocol_version,
+            node_id: file.node_id,
+            generation: "gen-test-1".to_owned(),
+            server_revision: "srv-test-1".to_owned(),
+            initialization_revision: file.initialization_revision,
+        };
+        let store = V1Store::open_and_recover(&root_dir, meta).unwrap();
+        assert!(!authenticate_secret(&store, "ck_anything"));
+        store
+            .conn
+            .lock()
+            .unwrap()
+            .execute("DROP TABLE access_keys", [])
+            .unwrap();
+        assert!(!authenticate_secret(&store, "ck_anything"));
     }
 
     // -----------------------------------------------------------------------
@@ -1583,6 +1593,7 @@ mod tests {
         let root_dir = tmp.0.join("pd-home");
         initialize_instance(&root_dir, None, Some("local"), Some(true)).unwrap();
         let (_file, token) = load_local_instance_and_token(&root_dir, None).unwrap();
+        let iid = _file.instance_id.clone();
 
         let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
         let server = tokio::spawn(crate::public_v1::bootstrap::serve_v1_gateway(
@@ -1612,9 +1623,62 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(50)).await;
         };
 
-        // The owner (local.token) creates the key over the wire.
+        // The owner (local.token) registers a project/session and a sleeping run
+        // for silent observation-stream revocation testing, then creates an access key.
         let mut owner = ws_connect(&ws_url, &token).await.expect("owner ws connect");
         ws_initialize(&mut owner, Some(&token)).await;
+        ws_send(
+            &mut owner,
+            &json!({
+                "jsonrpc": "2.0", "id": "p1", "method": "project.register",
+                "params": {"input": {
+                    "instanceId": iid,
+                    "projectId": "proj-ak",
+                    "name": "AKProj",
+                    "root": {"instanceId": iid, "rootId": "r1", "relativePath": "ws"}
+                }, "idempotencyKey": "ak-p1"}
+            }),
+        )
+        .await;
+        assert_eq!(
+            ws_wait_response(&mut owner, "p1").await["result"]["outcome"],
+            "succeeded"
+        );
+        ws_send(
+            &mut owner,
+            &json!({
+                "jsonrpc": "2.0", "id": "s1", "method": "session.create",
+                "params": {"input": {
+                    "instanceId": iid,
+                    "sessionId": "sess-ak",
+                    "projectId": "proj-ak"
+                }, "idempotencyKey": "ak-s1"}
+            }),
+        )
+        .await;
+        assert_eq!(
+            ws_wait_response(&mut owner, "s1").await["result"]["outcome"],
+            "succeeded"
+        );
+        ws_send(
+            &mut owner,
+            &json!({
+                "jsonrpc": "2.0", "id": "run1", "method": "run.submit",
+                "params": {"input": {
+                    "instanceId": iid,
+                    "sessionId": "sess-ak",
+                    "input": [{"kind": "text", "text": "[pd-driver:sleep=60000]"}]
+                }, "idempotencyKey": "ak-run1"}
+            }),
+        )
+        .await;
+        let run_resp = ws_wait_response(&mut owner, "run1").await;
+        assert_eq!(run_resp["result"]["outcome"], "accepted", "{run_resp}");
+        let run_id = run_resp["result"]["result"]["runId"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+
         ws_send(
             &mut owner,
             &json!({
@@ -1634,7 +1698,112 @@ mod tests {
             .expect("revision")
             .to_owned();
 
-        // The access key authenticates a real connection end to end.
+        // A second keyed connection opens a silent observation stream (`sub.open`)
+        // with large credit and sends zero subsequent inbound frames.
+        let mut silent_sub = ws_connect(&ws_url, &secret)
+            .await
+            .expect("silent sub ws connect");
+        ws_initialize(&mut silent_sub, None).await;
+        ws_send(
+            &mut silent_sub,
+            &json!({
+                "jsonrpc": "2.0", "id": "sub1", "method": "sub.open",
+                "params": {"stream": "run.events", "input": {"instanceId": iid, "runId": run_id}, "credit": 100000}
+            }),
+        )
+        .await;
+        let sub_opened = ws_wait_response(&mut silent_sub, "sub1").await;
+        assert!(
+            sub_opened["result"]["subscriptionId"].is_string(),
+            "{sub_opened}"
+        );
+
+        // First test temporary disable (`set_enabled(false)`): cuts the silent stream proactively.
+        ws_send(
+            &mut owner,
+            &json!({
+                "jsonrpc": "2.0", "id": "dis1", "method": "access_key.set_enabled",
+                "params": {"input": {"keyId": "k-live", "enabled": false, "expectedRevision": revision}}
+            }),
+        )
+        .await;
+        let disabled = ws_wait_response(&mut owner, "dis1").await;
+        assert_eq!(disabled["result"]["outcome"], "succeeded", "{disabled}");
+        let rev2 = disabled["result"]["result"]["key"]["revision"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+
+        let mut saw_unauth_end = false;
+        let mut saw_close = false;
+        let sub_deadline = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < sub_deadline {
+            match tokio::time::timeout(Duration::from_secs(5), silent_sub.next()).await {
+                Ok(Some(Ok(Message::Text(txt)))) => {
+                    let v: Value = serde_json::from_str(&txt).unwrap();
+                    if v.get("method").and_then(Value::as_str) == Some("sub.end")
+                        && v["params"]["terminal"] == "error"
+                        && v["params"]["error"]["code"] == "UNAUTHENTICATED"
+                    {
+                        saw_unauth_end = true;
+                    }
+                }
+                Ok(Some(Ok(Message::Close(_)))) | Ok(None) => {
+                    saw_close = true;
+                    break;
+                }
+                Ok(Some(Ok(_))) => {}
+                Ok(Some(Err(_))) => {
+                    saw_close = true;
+                    break;
+                }
+                Err(_) => break,
+            }
+        }
+        assert!(
+            saw_unauth_end,
+            "silent subscription must receive sub.end(error/UNAUTHENTICATED) on disable"
+        );
+        assert!(
+            saw_close,
+            "silent subscription connection must close on disable"
+        );
+
+        // Re-enable for the revocation test.
+        ws_send(
+            &mut owner,
+            &json!({
+                "jsonrpc": "2.0", "id": "en1", "method": "access_key.set_enabled",
+                "params": {"input": {"keyId": "k-live", "enabled": true, "expectedRevision": rev2}}
+            }),
+        )
+        .await;
+        let enabled = ws_wait_response(&mut owner, "en1").await;
+        assert_eq!(enabled["result"]["outcome"], "succeeded", "{enabled}");
+        let rev3 = enabled["result"]["result"]["key"]["revision"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+
+        // The access key authenticates a real connection end to end (and another silent stream).
+        let mut silent_sub2 = ws_connect(&ws_url, &secret)
+            .await
+            .expect("silent sub2 ws connect");
+        ws_initialize(&mut silent_sub2, None).await;
+        ws_send(
+            &mut silent_sub2,
+            &json!({
+                "jsonrpc": "2.0", "id": "sub2", "method": "sub.open",
+                "params": {"stream": "run.events", "input": {"instanceId": iid, "runId": run_id}, "credit": 100000}
+            }),
+        )
+        .await;
+        let sub_opened2 = ws_wait_response(&mut silent_sub2, "sub2").await;
+        assert!(
+            sub_opened2["result"]["subscriptionId"].is_string(),
+            "{sub_opened2}"
+        );
+
         let mut keyed = ws_connect(&ws_url, &secret)
             .await
             .expect("access-key ws connect");
@@ -1659,36 +1828,73 @@ mod tests {
             &mut owner,
             &json!({
                 "jsonrpc": "2.0", "id": "r3", "method": "access_key.revoke",
-                "params": {"input": {"keyId": "k-live", "expectedRevision": revision}}
+                "params": {"input": {"keyId": "k-live", "expectedRevision": rev3}}
             }),
         )
         .await;
         let revoked = ws_wait_response(&mut owner, "r3").await;
         assert_eq!(revoked["result"]["outcome"], "succeeded", "{revoked}");
 
-        // The still-open keyed connection is cut at its next admission
-        // boundary: the frame answers UNAUTHENTICATED, then the stream
-        // closes (旧观察流不能继续读取).
+        // Silent subscription stream gets cut with sub.end(error/UNAUTHENTICATED) + Close without sending any frame!
+        let mut saw_unauth_end2 = false;
+        let mut saw_close2 = false;
+        let sub_deadline2 = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < sub_deadline2 {
+            match tokio::time::timeout(Duration::from_secs(5), silent_sub2.next()).await {
+                Ok(Some(Ok(Message::Text(txt)))) => {
+                    let v: Value = serde_json::from_str(&txt).unwrap();
+                    if v.get("method").and_then(Value::as_str) == Some("sub.end")
+                        && v["params"]["terminal"] == "error"
+                        && v["params"]["error"]["code"] == "UNAUTHENTICATED"
+                    {
+                        saw_unauth_end2 = true;
+                    }
+                }
+                Ok(Some(Ok(Message::Close(_)))) | Ok(None) => {
+                    saw_close2 = true;
+                    break;
+                }
+                Ok(Some(Ok(_))) => {}
+                Ok(Some(Err(_))) => {
+                    saw_close2 = true;
+                    break;
+                }
+                Err(_) => break,
+            }
+        }
+        assert!(
+            saw_unauth_end2,
+            "silent subscription must receive sub.end(error/UNAUTHENTICATED) on revoke"
+        );
+        assert!(
+            saw_close2,
+            "silent subscription connection must close on revoke"
+        );
+
+        // Cancel the sleeper run before stopping the server cleanly.
         ws_send(
-            &mut keyed,
+            &mut owner,
             &json!({
-                "jsonrpc": "2.0", "id": "r4", "method": "access_key.list",
-                "params": {"input": {}}
+                "jsonrpc": "2.0", "id": "rc1", "method": "run.cancel",
+                "params": {"input": {"runId": run_id}, "idempotencyKey": "ak-rc1"}
             }),
         )
         .await;
-        let rejection = ws_wait_response(&mut keyed, "r4").await;
-        assert_eq!(
-            rejection["error"]["data"]["code"], "UNAUTHENTICATED",
-            "{rejection}"
-        );
-        let closed = tokio::time::timeout(Duration::from_secs(30), keyed.next())
-            .await
-            .expect("close arrived");
-        assert!(
-            matches!(closed, Some(Ok(Message::Close(_))) | None),
-            "expected the stream to close, got {closed:?}"
-        );
+        let _ = ws_wait_response(&mut owner, "rc1").await;
+
+        // Also `keyed` closes cleanly with Policy on revocation / admission.
+        let closed = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                match keyed.next().await {
+                    Some(Ok(Message::Close(_))) | None => return true,
+                    Some(Ok(_)) => continue,
+                    Some(Err(_)) => return true,
+                }
+            }
+        })
+        .await
+        .unwrap_or(false);
+        assert!(closed, "keyed connection must close upon revocation");
 
         // A fresh connection with the revoked secret is refused at the
         // HTTP upgrade (撤销后新访问拒绝).

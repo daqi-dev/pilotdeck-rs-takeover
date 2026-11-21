@@ -40,13 +40,12 @@ async fn run_submit(
     input: Value,
     idempotency_key: Option<String>,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
-    // t012 (session lifecycle): closed sessions refuse admission with
-    // SESSION_CLOSED and deleted/missing sessions with NOT_FOUND — the
-    // `session.close` contract requires exactly this before any queue
-    // effect. Open sessions are unaffected (the gate only reads state).
-    rt.store()
-        .check_session_admission(input["sessionId"].as_str().unwrap_or_default())?;
-    match rt.store().submit_run(&input, idempotency_key.as_deref())? {
+    let store = rt.store().clone();
+    let disposition =
+        tokio::task::spawn_blocking(move || store.submit_run(&input, idempotency_key.as_deref()))
+            .await
+            .map_err(|e| DispatchError::Application(internal_err(e)))??;
+    match disposition {
         crate::public_v1::store::SubmitDisposition::Deduplicated { receipt } => {
             Ok((ResponseOutcome::Accepted, receipt))
         }
@@ -68,9 +67,11 @@ async fn run_get(
     rt: Arc<PublicV1Runtime>,
     input: Value,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
-    let run = rt
-        .store()
-        .get_run(input["runId"].as_str().unwrap_or_default())?;
+    let store = rt.store().clone();
+    let run_id = input["runId"].as_str().unwrap_or_default().to_owned();
+    let run = tokio::task::spawn_blocking(move || store.get_run(&run_id))
+        .await
+        .map_err(|e| DispatchError::Application(internal_err(e)))??;
     let snap_cursor = run.final_cursor.clone();
     Ok((
         ResponseOutcome::Succeeded,
@@ -91,11 +92,15 @@ async fn run_list(
             .map(ToOwned::to_owned)
             .collect::<Vec<_>>()
     });
-    Ok((
-        ResponseOutcome::Succeeded,
-        rt.store()
-            .list_runs(input.get("scope"), states.as_ref(), input.get("page"))?,
-    ))
+    let store = rt.store().clone();
+    let scope = input.get("scope").cloned();
+    let page = input.get("page").cloned();
+    let res = tokio::task::spawn_blocking(move || {
+        store.list_runs(scope.as_ref(), states.as_ref(), page.as_ref())
+    })
+    .await
+    .map_err(|e| DispatchError::Application(internal_err(e)))??;
+    Ok((ResponseOutcome::Succeeded, res))
 }
 
 async fn run_wait(
@@ -103,11 +108,6 @@ async fn run_wait(
     input: Value,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
     let run_id = input["runId"].as_str().unwrap_or_default().to_owned();
-    // P2 (wp4 review): the omitted-`timeoutMs` default follows the
-    // operation schema / protocol constant (30 s), and the
-    // deadline arithmetic cannot panic on an unbounded `timeoutMs`
-    // (the schema declares no maximum; overflow falls back to a
-    // 24 h bound instead of panicking on `Instant + Duration`).
     let timeout_ms = input
         .get("timeoutMs")
         .and_then(Value::as_u64)
@@ -118,7 +118,14 @@ async fn run_wait(
     let notifier = rt.store().state_notifier();
     loop {
         let notified = notifier.notified();
-        let run = rt.store().get_run(&run_id)?;
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+
+        let store = rt.store().clone();
+        let rid = run_id.clone();
+        let run = tokio::task::spawn_blocking(move || store.get_run(&rid))
+            .await
+            .map_err(|e| DispatchError::Application(internal_err(e)))??;
         if is_terminal_run_state(run.state) {
             return Ok((
                 ResponseOutcome::Succeeded,
@@ -152,15 +159,23 @@ async fn run_events(
     rt: Arc<PublicV1Runtime>,
     input: Value,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
-    let run_id = input["runId"].as_str().unwrap_or_default();
-    let after = input.get("afterCursor").and_then(Value::as_str);
+    let run_id = input["runId"].as_str().unwrap_or_default().to_owned();
+    let after = input
+        .get("afterCursor")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned);
     let limit = input
         .get("page")
         .and_then(|p| p.get("limit"))
         .and_then(Value::as_u64)
         .unwrap_or(100)
         .clamp(1, 500) as usize;
-    let res = rt.store().query_run_events_page(run_id, after, limit)?;
+    let store = rt.store().clone();
+    let res = tokio::task::spawn_blocking(move || {
+        store.query_run_events_page(&run_id, after.as_deref(), limit)
+    })
+    .await
+    .map_err(|e| DispatchError::Application(internal_err(e)))??;
     let val = match res {
         EventsQueryResult::Page(p) => p,
         EventsQueryResult::Gap(g) => g,
@@ -172,11 +187,12 @@ async fn run_snapshot(
     rt: Arc<PublicV1Runtime>,
     input: Value,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
-    let run_id = input["runId"].as_str().unwrap_or_default();
-    Ok((
-        ResponseOutcome::Succeeded,
-        rt.store().build_run_snapshot(run_id)?,
-    ))
+    let run_id = input["runId"].as_str().unwrap_or_default().to_owned();
+    let store = rt.store().clone();
+    let snap = tokio::task::spawn_blocking(move || store.build_run_snapshot(&run_id))
+        .await
+        .map_err(|e| DispatchError::Application(internal_err(e)))??;
+    Ok((ResponseOutcome::Succeeded, snap))
 }
 
 async fn run_cancel(
@@ -184,10 +200,24 @@ async fn run_cancel(
     input: Value,
     idempotency_key: Option<String>,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
-    let run_id = input["runId"].as_str().unwrap_or_default();
-    let outcome = rt.store().cancel_run(run_id, idempotency_key.as_deref())?;
+    let run_id = input["runId"].as_str().unwrap_or_default().to_owned();
+    let store = rt.store().clone();
+    let rid = run_id.clone();
+    let outcome =
+        tokio::task::spawn_blocking(move || store.cancel_run(&rid, idempotency_key.as_deref()))
+            .await
+            .map_err(|e| DispatchError::Application(internal_err(e)))??;
     if outcome.should_notify_worker {
-        rt.signal_run_cancel(run_id);
+        rt.signal_run_cancel(&run_id);
     }
     Ok((ResponseOutcome::Succeeded, outcome.receipt))
+}
+
+fn internal_err(err: tokio::task::JoinError) -> agentcpm_pd_protocol::errors::ContractError {
+    agentcpm_pd_protocol::errors::ContractError::new(
+        agentcpm_pd_protocol::errors::CODE_UNAVAILABLE,
+        format!("blocking run task failed: {err}"),
+        agentcpm_pd_protocol::errors::RetrySpec::backoff_read(Some(250)),
+        agentcpm_pd_protocol::errors::EffectStatus::Unknown,
+    )
 }

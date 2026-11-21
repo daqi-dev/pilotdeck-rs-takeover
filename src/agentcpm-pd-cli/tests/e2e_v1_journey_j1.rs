@@ -82,6 +82,7 @@ use common_v1::*;
 fn journey_cli(home: &Path, args: &[&str]) -> CliOutcome {
     let mut cmd = std::process::Command::new(BIN);
     cmd.env("AGENTCPM_PD_HOME", home)
+        .env("AGENTCPM_PD_ENABLE_OFFLINE_DIRECTIVES", "1")
         .env("HOME", home)
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .env("GIT_CONFIG_SYSTEM", "/dev/null")
