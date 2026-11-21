@@ -3293,10 +3293,7 @@ mod tests {
             previous_pid: 99,
             started_at: "2026-11-18T00:00:00Z".to_owned(),
         };
-        assert_eq!(
-            layout::try_claim_restart_pending(&fx.home, &sentinel).unwrap(),
-            true
-        );
+        assert!(layout::try_claim_restart_pending(&fx.home, &sentinel).unwrap());
         let handoff_err = initiate_restart_handoff(
             &fx.domain,
             &fx.root,

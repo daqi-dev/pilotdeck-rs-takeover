@@ -922,9 +922,9 @@ mod tests {
             previous_pid: 42,
             started_at: "2026-11-18T00:00:00Z".to_owned(),
         };
-        assert_eq!(try_claim_restart_pending(&root, &pending).unwrap(), true);
-        assert_eq!(try_claim_restart_pending(&root, &pending).unwrap(), false);
+        assert!(try_claim_restart_pending(&root, &pending).unwrap());
+        assert!(!try_claim_restart_pending(&root, &pending).unwrap());
         remove_restart_pending(&root);
-        assert_eq!(try_claim_restart_pending(&root, &pending).unwrap(), true);
+        assert!(try_claim_restart_pending(&root, &pending).unwrap());
     }
 }

@@ -3111,7 +3111,7 @@ mod tests {
         if rustix::process::geteuid().as_raw() != 0 {
             std::fs::set_permissions(&st_dir, std::fs::Permissions::from_mode(0o555)).unwrap();
             let err = execute_commit(
-                &rt.store(),
+                rt.store(),
                 &home,
                 &staging_id,
                 "phash-atomic",
