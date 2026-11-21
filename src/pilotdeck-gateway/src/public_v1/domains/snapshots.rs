@@ -5811,7 +5811,7 @@ mod tests {
             "snapshots.plan_restore",
             json!({
                 "projectId": project_id,
-                "snapshotId": snap,
+                "snapshotIds": [snap],
                 "direction": "after",
             }),
             None,
@@ -5843,7 +5843,7 @@ mod tests {
             "snapshots.plan_restore",
             json!({
                 "projectId": project_id,
-                "snapshotId": snap2,
+                "snapshotIds": [snap2],
                 "direction": "after",
             }),
         )
@@ -5903,7 +5903,7 @@ mod tests {
                 "snapshots.plan_restore",
                 json!({
                     "projectId": project_id,
-                    "snapshotId": s1,
+                    "snapshotIds": [s1],
                     "direction": "after",
                 }),
             )
@@ -5998,7 +5998,7 @@ mod tests {
                 "snapshots.plan_restore",
                 json!({
                     "projectId": project_id,
-                    "snapshotId": s1,
+                    "snapshotIds": [s1],
                     "direction": "after",
                 }),
             )
@@ -6054,7 +6054,7 @@ mod tests {
             "snapshots.plan_restore",
             json!({
                 "projectId": project_id,
-                "snapshotId": snap,
+                "snapshotIds": [snap],
                 "direction": "after",
             }),
         )
@@ -6118,7 +6118,7 @@ mod tests {
             "snapshots.plan_restore",
             json!({
                 "projectId": project_id,
-                "snapshotId": snap2,
+                "snapshotIds": [snap2],
                 "direction": "after",
             }),
         )
@@ -6180,13 +6180,13 @@ mod tests {
             "snapshots.plan_restore",
             json!({
                 "projectId": project_id,
-                "snapshotId": snap_id,
+                "snapshotIds": [snap_id],
                 "direction": "after",
             }),
         )
         .await;
-        let targets = plan["targets"].as_array().unwrap();
-        let conflicts = plan["conflicts"].as_array().unwrap();
+        let targets = plan["entries"].as_array().unwrap();
+        let conflicts = plan["plan"]["conflicts"].as_array().unwrap();
         assert!(
             targets
                 .iter()
@@ -6202,7 +6202,7 @@ mod tests {
         );
         assert!(
             conflicts.iter().any(|c| {
-                c["path"]["relativePath"]["value"] == json!("moved_dir")
+                c["resourceId"] == json!("moved_dir")
                     && c["code"] == json!(CODE_SNAPSHOT_UNAVAILABLE)
             }),
             "missing-artifact non-delete entry must conflict with SNAPSHOT_UNAVAILABLE: {plan:?}"
