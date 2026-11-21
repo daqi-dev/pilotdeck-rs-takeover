@@ -2503,7 +2503,7 @@ mod review_fix_tests {
                     Ok(Box::new(OversizedStream {
                         sent: false,
                         closed,
-                    }) as Box<dyn FollowStream + Send>)
+                    }) as Box<dyn FollowStream>)
                 })
             }
         }
