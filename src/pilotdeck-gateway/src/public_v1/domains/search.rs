@@ -1965,12 +1965,13 @@ mod tests {
             let now = now_rfc3339();
             for seq in 1..=3 {
                 conn.execute(
-                    "INSERT INTO history_entries (session_id, seq, entry_id, role, content_json, created_at)
-                     VALUES (?1, ?2, ?3, 'user', ?4, ?5)",
+                    "INSERT INTO history_entries (session_id, seq, entry_id, turn_id, role, content_json, created_at)
+                     VALUES (?1, ?2, ?3, ?4, 'user', ?5, ?6)",
                     params![
                         session_id,
                         seq,
                         format!("ent-{seq}"),
+                        format!("turn-{seq}"),
                         serde_json::to_string(&json!({"text": format!("needle hit {seq}")})).unwrap(),
                         now,
                     ],
